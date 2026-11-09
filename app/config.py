@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     followup_delay_seconds: int = 900
     inbound_debounce_seconds: float = 7.0
+    handoff_max_objecoes: int = 3
 
     # TTL memória conversa/meta (segundos) — 30 dias
     memory_ttl_seconds: int = 60 * 60 * 24 * 30

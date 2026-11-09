@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import random
-import re
 import time
 
 from app.checkout import create_checkout
@@ -11,45 +10,27 @@ from app.clients.openrouter import OpenRouterClient
 from app.clients.stt import SpeechToTextClient
 from app.config import Settings
 from app.followups import get_scheduler
-from app.knowledge import load_conhecimento_lead, load_regras
+from app.lead_state import (
+    advance_etapa,
+    can_run_action,
+    ensure_lead_state,
+    merge_state_update,
+    summarize_lead,
+)
 from app.memory import ConversationMemory
 from app.messaging import split_whatsapp_messages
+from app.prompt_builder import build_system_prompt
+from app.schemas import (
+    AgentResponse,
+    looks_like_json,
+    normalize_cpf,
+    parse_agent_response,
+    safe_fallback_response,
+)
 from app.speech import to_spoken_script
 
 logger = logging.getLogger("edu.orchestrator")
 
-SYSTEM_TEMPLATE = """Você é o Edu, consultor de matrícula humanizado da Faveni Polo Catanduva no WhatsApp.
-Objetivo: conduzir o lead até aceitar a matrícula de pós EAD (ou 2ª licenciatura/graduação se pedir), sem alucinar e sem sair do fluxo comercial.
-
-## Regras de comportamento
-{regras}
-
-## Fechamento — jornada (obrigatório — fonte única)
-
-Há DOIS caminhos. Nunca misture no mesmo turno.
-
-### Caminho A — contrato primeiro (padrão se faltar documento OU lead quiser ver contrato/informativo)
-1. Peça por escrito, de uma vez, com este sentido (pode variar as palavras):
-   - Agora preciso do seu nome completo, CPF e data de nascimento para adiantar o contrato.
-   - Depois que fecharmos a matrícula, você envia a documentação: RG ou CNH, diploma ou declaração de conclusão, histórico e certidão.
-2. NÃO use frases do tipo “não bloqueia o contrato” / “sem bloquear o envio”. Soa estranho. Separe: dados agora → docs depois do fechamento.
-3. Quando o lead enviar os três dados, confirme em uma frase e inclua NO FINAL, sozinhas, NESTA ORDEM:
-LEAD_DATA|<nome completo>|<CPF>|<data nascimento>
-FOLLOWUP_DOC|<curso ou Pós-Graduação EAD Faveni>
-4. Diga que você prepara o contrato/informativo (~15 min) e, se estiver ok, manda o link da matrícula em seguida.
-5. NÃO use CHECKOUT_READY neste caminho. O sistema envia o link DEPOIS do PDF.
-6. NÃO prometa contrato/PDF sem emitir FOLLOWUP_DOC + LEAD_DATA.
-
-### Caminho B — checkout direto
-Só se o lead já tiver dados coletados E aceitar fechar sem pedir contrato, E não houver promessa de documento pendente:
-CHECKOUT_READY|<curso>
-Não invente links — o sistema anexa.
-
-## Base de conhecimento (fatos para o lead)
-{conhecimento}
-"""
-
-# Momentos em que áudio agrega (empatia / fechamento) — não para todo turno
 AUDIO_KEY_HINTS = (
     "matricul",
     "fech",
@@ -79,9 +60,7 @@ class Orchestrator:
         self.memory = ConversationMemory(settings)
 
     def _idle_ms(self) -> int:
-        lo = self.settings.human_idle_min_ms
-        hi = self.settings.human_idle_max_ms
-        return random.randint(lo, hi)
+        return random.randint(self.settings.human_idle_min_ms, self.settings.human_idle_max_ms)
 
     def _typing_ms(self, text: str) -> int:
         approx = 1800 + int(len(text) * 35)
@@ -99,16 +78,13 @@ class Orchestrator:
         presence: str = "composing",
         activity_ms: int = 3000,
     ) -> None:
-        """Silêncio → lido → digitando/gravando (sem flicker)."""
         target_idle = self._idle_ms() / 1000.0
         elapsed = time.monotonic() - started_at
         remaining = target_idle - elapsed
         if remaining > 0.2:
             await asyncio.sleep(remaining)
-
         if message_id:
             await self.evo.mark_as_read(remote_jid=remote_jid or phone, message_id=message_id)
-
         await asyncio.sleep(random.uniform(0.4, 0.9))
         await self.evo.send_presence(phone, delay_ms=activity_ms, presence=presence)  # type: ignore[arg-type]
 
@@ -120,30 +96,20 @@ class Orchestrator:
         reply: str,
         course: str | None,
     ) -> bool:
-        """Alterna áudio/texto: não espelha áudio em todo turno (fica seco e artificial)."""
         if not self.tts.enabled:
             return False
-
         meta = self.memory.get_meta(phone)
         consecutive_audio = int(meta.get("consecutive_audio_out", 0) or 0)
         low = reply.lower()
         key_moment = bool(course) or any(h in low for h in AUDIO_KEY_HINTS)
-
-        # Evita rajada de áudios: após 1 áudio, força texto no próximo (exceto fechamento)
         if consecutive_audio >= 1 and not course:
             return False
-
-        # Lead mandou áudio: responde áudio no máximo 1x seguidas, ou em momento-chave
         if inbound_was_audio:
             if consecutive_audio == 0:
-                # 70% áudio na primeira resposta a um áudio; senão texto (variação natural)
                 return random.random() < 0.7 or key_moment
             return key_moment
-
-        # Lead mandou texto: áudio só em momento-chave (fechamento / empatia forte)
         if key_moment and consecutive_audio == 0:
             return random.random() < 0.55
-
         return False
 
     def _remember_outbound_mode(self, phone: str, *, used_audio: bool) -> None:
@@ -157,7 +123,6 @@ class Orchestrator:
         self.memory.set_meta(phone, meta)
 
     async def merge_inbound_batch(self, batch: list[dict]) -> dict:
-        """Transcreve cada áudio do lote e concatena textos na ordem."""
         parts: list[str] = []
         push_name = ""
         remote_jid = ""
@@ -209,6 +174,103 @@ class Orchestrator:
             "document_filename": ", ".join(doc_names),
         }
 
+    async def _call_agent_json(self, messages: list[dict]) -> AgentResponse:
+        raw = await self.llm.chat(messages, temperature=0.4)
+        parsed = parse_agent_response(raw)
+        if parsed:
+            return parsed
+
+        logger.warning("JSON inválido — retry")
+        retry_messages = list(messages) + [
+            {
+                "role": "system",
+                "content": (
+                    "Sua resposta anterior não era JSON válido. "
+                    "Responda SOMENTE o objeto JSON do schema, sem markdown."
+                ),
+            }
+        ]
+        raw2 = await self.llm.chat(retry_messages, temperature=0.2)
+        parsed2 = parse_agent_response(raw2)
+        if parsed2:
+            return parsed2
+        return safe_fallback_response(raw2 or raw)
+
+    def _apply_actions(self, phone: str, meta: dict, agent: AgentResponse, push_name: str) -> tuple[str, str | None]:
+        """Executa action permitida. Retorna (reply, course_for_audio)."""
+        reply = agent.reply.strip()
+        if looks_like_json(reply):
+            reply = "Só um instante, me confirma de novo o que você precisa?"
+
+        action = agent.action
+        data = agent.action_data or {}
+        ok, reason = can_run_action(meta, action)
+        if action and not ok:
+            logger.info("action ignorada phone=%s reason=%s", phone, reason)
+            action = None
+
+        course: str | None = None
+        ls = meta["lead_state"]
+
+        if action == "LEAD_DATA":
+            full_name = str(data.get("full_name") or "").strip()
+            cpf = normalize_cpf(str(data.get("cpf") or ""))
+            birth = str(data.get("birth_date") or "").strip()
+            if full_name and cpf and birth:
+                meta["full_name"] = full_name
+                meta["cpf"] = cpf
+                meta["birth_date"] = birth
+                ls["nome"] = full_name
+            else:
+                logger.warning("LEAD_DATA incompleto/CPF inválido phone=%s", phone)
+
+        elif action == "FOLLOWUP_DOC":
+            # curso_escolhido no estado é a fonte de verdade
+            course = str(ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni").strip()
+            full_name = str(data.get("full_name") or meta.get("full_name") or ls.get("nome") or "").strip()
+            cpf = normalize_cpf(str(data.get("cpf") or meta.get("cpf") or ""))
+            birth = str(data.get("birth_date") or meta.get("birth_date") or "").strip()
+            if not (full_name and cpf and birth):
+                logger.warning("FOLLOWUP_DOC sem dados phone=%s", phone)
+                if "cpf" not in reply.lower() and "nome completo" not in reply.lower():
+                    reply = (
+                        f"{reply}\n\n"
+                        "Pra adiantar o contrato, me manda por escrito: "
+                        "nome completo, CPF e data de nascimento. "
+                        "Depois que fecharmos, você envia a documentação "
+                        "(RG ou CNH, diploma ou declaração, histórico e certidão)."
+                    )
+            else:
+                meta["full_name"] = full_name
+                meta["cpf"] = cpf
+                meta["birth_date"] = birth
+                ls["nome"] = full_name
+                ls["curso_escolhido"] = course
+                get_scheduler().schedule_document(
+                    phone=phone,
+                    lead_name=full_name,
+                    cpf=cpf,
+                    birth_date=birth,
+                    course=course,
+                    with_checkout=True,
+                )
+                meta["pending_contract"] = True
+                meta["course"] = course
+                logger.info("FOLLOWUP_DOC agendado phone=%s course=%s", phone, course)
+
+        elif action == "CHECKOUT_READY":
+            course = str(ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni").strip()
+            name = meta.get("full_name") or ls.get("nome") or push_name
+            session = create_checkout(phone, course_label=course, lead_name=name or "")
+            link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
+            reply = (
+                f"{reply}\n\n"
+                f"Perfeito — preparei sua matrícula (demonstração):\n{link}\n\n"
+                "É só abrir e confirmar. Documentos complementares podem ser enviados depois."
+            )
+
+        return reply, course
+
     async def handle_inbound(
         self,
         phone: str,
@@ -227,7 +289,6 @@ class Orchestrator:
         user_text = (text or "").strip()
         started_at = time.monotonic()
 
-        # Fallback legado: um único áudio sem texto pré-transcrito
         if inbound_audio and not user_text and media_message:
             try:
                 audio_bytes = await self.evo.download_media(media_message)
@@ -272,12 +333,23 @@ class Orchestrator:
             await self.evo.send_text(phone, reply, delay_ms=0)
             return reply
 
-        system = SYSTEM_TEMPLATE.format(
-            regras=load_regras(),
-            conhecimento=load_conhecimento_lead(),
+        meta = self.memory.get_meta(phone)
+        ls = ensure_lead_state(meta)
+        if push_name and not ls.get("nome"):
+            # não assume nome legal; só contexto
+            pass
+
+        etapa = meta.get("etapa") or "abertura"
+        system = build_system_prompt(
+            etapa=etapa,
+            lead_state=ls,
+            meta_flags={
+                "pending_contract": meta.get("pending_contract"),
+                "contract_sent": meta.get("contract_sent"),
+            },
         )
         history = self.memory.get_history(phone)
-        messages = [{"role": "system", "content": system}]
+        messages: list[dict] = [{"role": "system", "content": system}]
         if push_name and not history:
             messages.append(
                 {
@@ -289,86 +361,30 @@ class Orchestrator:
             messages.append(
                 {
                     "role": "system",
-                    "content": (
-                        "O lead mandou um ÁUDIO (já transcrito). Mantenha empatia e calor — "
-                        "não fique seco só porque veio áudio. Continua 1 pergunta por vez."
-                    ),
+                    "content": "O lead mandou ÁUDIO (já transcrito). Mantenha empatia e calor.",
                 }
             )
         if has_image or has_document:
             messages.append(
                 {
                     "role": "system",
-                    "content": (
-                        "O lead enviou imagem/documento. Confirme o recebimento de forma natural "
-                        "e siga o funil (não diga que vai analisar o arquivo agora)."
-                    ),
+                    "content": "O lead enviou imagem/documento. Confirme o recebimento e siga o funil.",
                 }
             )
         messages.extend(history)
         messages.append({"role": "user", "content": user_text})
 
-        raw = await self.llm.chat(messages)
-        reply, course, followup_course, lead_data = self._split_markers(raw)
+        agent = await self._call_agent_json(messages)
 
-        meta = self.memory.get_meta(phone)
-        if lead_data:
-            meta.update(
-                {
-                    "full_name": lead_data["full_name"],
-                    "cpf": lead_data["cpf"],
-                    "birth_date": lead_data["birth_date"],
-                }
-            )
-            self.memory.set_meta(phone, meta)
-            logger.info("LEAD_DATA salvo phone=%s", phone)
+        # merge fatos (sem etapa)
+        merge_state_update(ls, agent.state_update)
+        meta["lead_state"] = ls
+        advance_etapa(meta, handoff_max_objecoes=self.settings.handoff_max_objecoes)
+        if meta.get("etapa") == "handoff_humano":
+            logger.info("handoff_humano phone=%s summary=%s", phone, summarize_lead(meta))
 
-        # Caminho contrato: nunca manda link no mesmo turno
-        if followup_course:
-            ld = lead_data or {}
-            full_name = (meta.get("full_name") or ld.get("full_name") or "").strip()
-            cpf = (meta.get("cpf") or ld.get("cpf") or "").strip()
-            birth = (meta.get("birth_date") or ld.get("birth_date") or "").strip()
-            if not (full_name and cpf and birth):
-                # Sem dados: não agenda PDF vazio — pede dados na resposta
-                logger.warning("FOLLOWUP_DOC sem LEAD_DATA phone=%s — ignorado", phone)
-                if "nome completo" not in reply.lower() and "cpf" not in reply.lower():
-                    reply = (
-                        f"{reply}\n\n"
-                        "Pra adiantar o contrato, me manda por escrito: "
-                        "nome completo, CPF e data de nascimento. "
-                        "Depois que fecharmos, você envia a documentação "
-                        "(RG ou CNH, diploma ou declaração, histórico e certidão)."
-                    )
-            else:
-                get_scheduler().schedule_document(
-                    phone=phone,
-                    lead_name=full_name,
-                    cpf=cpf,
-                    birth_date=birth,
-                    course=followup_course,
-                    with_checkout=True,
-                )
-                meta["pending_contract"] = True
-                meta["course"] = followup_course
-                self.memory.set_meta(phone, meta)
-                logger.info("FOLLOWUP_DOC agendado phone=%s course=%s", phone, followup_course)
-            course = None  # bloqueia checkout imediato
-
-        elif course:
-            # Se já tem contrato pendente, não manda link agora
-            if meta.get("pending_contract"):
-                logger.info("CHECKOUT_READY adiado — contrato pendente phone=%s", phone)
-                course = None
-            else:
-                name = meta.get("full_name") or push_name
-                session = create_checkout(phone, course_label=course, lead_name=name or "")
-                link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
-                reply = (
-                    f"{reply}\n\n"
-                    f"Perfeito — preparei sua matrícula (demonstração):\n{link}\n\n"
-                    "É só abrir e confirmar. Documentos complementares podem ser enviados depois."
-                )
+        reply, course = self._apply_actions(phone, meta, agent, push_name)
+        self.memory.set_meta(phone, meta)
 
         self.memory.append(phone, "user", user_text)
         self.memory.append(phone, "assistant", reply)
@@ -395,7 +411,6 @@ class Orchestrator:
                 )
                 await self.evo.send_audio(phone, audio, delay_ms=0)
                 self._remember_outbound_mode(phone, used_audio=True)
-
                 if "http" in reply:
                     links = "\n".join(l for l in reply.splitlines() if "http" in l)
                     await asyncio.sleep(random.uniform(1.2, 2.0))
@@ -428,35 +443,3 @@ class Orchestrator:
 
         self._remember_outbound_mode(phone, used_audio=False)
         return reply
-
-    @staticmethod
-    def _split_markers(
-        raw: str,
-    ) -> tuple[str, str | None, str | None, dict[str, str] | None]:
-        text = raw.strip()
-        course: str | None = None
-        followup: str | None = None
-        lead_data: dict[str, str] | None = None
-
-        lead_match = re.search(r"LEAD_DATA\|(.+)$", text, flags=re.MULTILINE)
-        if lead_match:
-            parts = [p.strip() for p in lead_match.group(1).split("|")]
-            if len(parts) >= 3:
-                lead_data = {
-                    "full_name": parts[0],
-                    "cpf": parts[1],
-                    "birth_date": parts[2],
-                }
-            text = re.sub(r"\n?LEAD_DATA\|.+$", "", text, flags=re.MULTILINE).strip()
-
-        checkout_match = re.search(r"CHECKOUT_READY\|(.+)$", text, flags=re.MULTILINE)
-        if checkout_match:
-            course = checkout_match.group(1).strip() or "Pós-Graduação EAD Faveni"
-            text = re.sub(r"\n?CHECKOUT_READY\|.+$", "", text, flags=re.MULTILINE).strip()
-
-        followup_match = re.search(r"FOLLOWUP_DOC\|(.+)$", text, flags=re.MULTILINE)
-        if followup_match:
-            followup = followup_match.group(1).strip() or "Pós-Graduação EAD Faveni"
-            text = re.sub(r"\n?FOLLOWUP_DOC\|.+$", "", text, flags=re.MULTILINE).strip()
-
-        return text, course, followup, lead_data

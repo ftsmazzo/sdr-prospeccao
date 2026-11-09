@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.5.1", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.6.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,13 +66,14 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.5.1",
+        "version": "0.6.0",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
         "followup_delay_seconds": settings.followup_delay_seconds,
         "webhook_secret_enforce": settings.webhook_secret_enforce,
         "inbound_debounce_seconds": settings.inbound_debounce_seconds,
+        "handoff_max_objecoes": settings.handoff_max_objecoes,
         "redis": bool(settings.redis_url),
     }
 
@@ -141,6 +142,74 @@ async def list_followups(request: Request):
             }
             for j in jobs
         ],
+    }
+
+
+@app.get("/admin/leads/{phone}")
+async def get_lead(phone: str, request: Request):
+    """Snapshot do lead_state + etapa. Header: X-Admin-Secret."""
+    if not _admin_authorized(request):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+
+    from app.lead_state import ensure_lead_state, summarize_lead
+    from app.memory import ConversationMemory
+
+    settings = get_settings()
+    digits = phone.replace("+", "").replace(" ", "").replace("-", "")
+    memory = ConversationMemory(settings)
+    meta = memory.get_meta(digits)
+    ensure_lead_state(meta)
+    history = memory.get_history(digits)
+    return {
+        "ok": True,
+        "phone": digits,
+        "etapa": meta.get("etapa"),
+        "lead_state": meta.get("lead_state"),
+        "pending_contract": bool(meta.get("pending_contract")),
+        "contract_sent": bool(meta.get("contract_sent")),
+        "objecoes_sem_avanco": meta.get("objecoes_sem_avanco", 0),
+        "full_name": meta.get("full_name"),
+        "has_cpf": bool(meta.get("cpf")),
+        "course": meta.get("course"),
+        "history_len": len(history),
+        "summary": summarize_lead(meta),
+    }
+
+
+@app.post("/admin/leads/{phone}/reset-etapa")
+async def reset_lead_etapa(phone: str, request: Request):
+    """Reinicia etapa do lead (default qualificacao). Header: X-Admin-Secret."""
+    if not _admin_authorized(request):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+
+    from app.lead_state import ETAPAS, reset_etapa
+    from app.memory import ConversationMemory
+
+    settings = get_settings()
+    digits = phone.replace("+", "").replace(" ", "").replace("-", "")
+    etapa = (body.get("etapa") or "qualificacao").strip()
+    if etapa not in ETAPAS:
+        return JSONResponse(
+            {"ok": False, "error": "etapa_invalida", "allowed": list(ETAPAS)},
+            status_code=400,
+        )
+
+    memory = ConversationMemory(settings)
+    meta = memory.get_meta(digits)
+    reset_etapa(meta, etapa)
+    memory.set_meta(digits, meta)
+    return {
+        "ok": True,
+        "phone": digits,
+        "etapa": meta.get("etapa"),
+        "lead_state": meta.get("lead_state"),
+        "objecoes_sem_avanco": meta.get("objecoes_sem_avanco", 0),
     }
 
 
@@ -298,6 +367,19 @@ def checkout_confirm(token: str):
     session = confirm_checkout(token)
     if not session:
         return HTMLResponse("<h1>Link inválido</h1>", status_code=404)
+    try:
+        from app.lead_state import ensure_lead_state
+        from app.memory import ConversationMemory
+
+        settings = get_settings()
+        mem = ConversationMemory(settings)
+        meta = mem.get_meta(session.phone)
+        ensure_lead_state(meta)
+        meta["etapa"] = "matriculado"
+        meta["pending_contract"] = False
+        mem.set_meta(session.phone, meta)
+    except Exception:
+        logger.exception("falha ao marcar matriculado phone=%s", getattr(session, "phone", ""))
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="pt-BR">

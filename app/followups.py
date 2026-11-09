@@ -200,12 +200,20 @@ class FollowUpScheduler:
             )
         # Libera caminho de checkout futuro e marca contrato entregue
         try:
+            from app.lead_state import ensure_lead_state
             from app.memory import ConversationMemory
 
             mem = ConversationMemory(self.settings)
             meta = mem.get_meta(phone)
+            ensure_lead_state(meta)
             meta["pending_contract"] = False
             meta["contract_sent"] = True
+            meta["etapa"] = "contrato_enviado"
+            ls = meta["lead_state"]
+            if job.get("course"):
+                ls["curso_escolhido"] = job["course"]
+            if job.get("lead_name"):
+                ls["nome"] = job["lead_name"]
             mem.set_meta(phone, meta)
         except Exception:  # noqa: BLE001
             logger.warning("não atualizou meta pós-contrato phone=%s", phone)
@@ -235,5 +243,5 @@ async def followup_worker(stop_event: asyncio.Event) -> None:
             logger.exception("erro no worker de follow-up")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=20)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
