@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from datetime import UTC, datetime
 from typing import Any
 
@@ -68,19 +70,42 @@ STATE_FORBIDDEN = {
     "etapa_antes_handoff",
 }
 
-PROMISE_HINTS = (
-    "contrato",
-    "pdf",
-    "link",
-    "checkout",
-    "matrícula",
-    "matricula",
-    "preparei",
-    "vou preparar",
-    "te mando o",
-    "te envio",
-    "documento",
-    "http",
+# Promessa = agente diz que VAI ENTREGAR algo (verbo 1ª pessoa + objeto).
+# Palavra solta (matrícula, contrato, documento, link) NÃO é promessa.
+_PROMISE_DELIVERY_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:ja\s+)?vou(?:\s+ja)?\s+"
+        r"(?:te\s+)?"
+        r"(?:preparar|gerar|mandar|enviar|separar)\b"
+        r".{0,80}?"
+        r"\b(?:contrato|pdf|informativo|link|sua\s+matricula)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:preparei|gerei|separei|montei)\b"
+        r".{0,80}?"
+        r"\b(?:contrato|pdf|informativo|link|sua\s+matricula)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:ja\s+)?(?:te\s+)?(?:mando|envio|mandei|enviei)\b"
+        r".{0,60}?"
+        r"\b(?:contrato|pdf|informativo|link|sua\s+matricula)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:segue|aqui\s+esta|aqui\s+vai|segue\s+em\s+anexo)\b"
+        r".{0,60}?"
+        r"\b(?:o\s+)?(?:link|contrato|pdf|informativo)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\b(?:em\s+alguns\s+minutos|em\s+instantes|daqui\s+a\s+pouco|"
+        r"em\s+alguns\s+minutinhos)\b"
+        r".{0,80}?"
+        r"\b(?:contrato|pdf|link|informativo|sua\s+matricula)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
 )
 
 
@@ -521,9 +546,15 @@ def can_run_action(meta: dict[str, Any], action: str | None) -> tuple[bool, str]
     return False, f"action desconhecida {action}"
 
 
+def _fold_accents(text: str) -> str:
+    norm = unicodedata.normalize("NFD", text or "")
+    return "".join(ch for ch in norm if unicodedata.category(ch) != "Mn")
+
+
 def reply_looks_like_promise(reply: str) -> bool:
-    low = (reply or "").lower()
-    return any(h in low for h in PROMISE_HINTS)
+    """True só se a agente promete ENTREGAR contrato/PDF/link (não só mencionar o assunto)."""
+    folded = _fold_accents(reply or "")
+    return any(rx.search(folded) for rx in _PROMISE_DELIVERY_RES)
 
 
 def rewrite_blocked_action_reply(reason: str, reply: str, ls: dict[str, Any]) -> str:

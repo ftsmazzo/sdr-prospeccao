@@ -155,6 +155,29 @@ def test_action_bloqueada_e_promessa_sem_acao():
     assert "confirma qual curso" in r2.lower()
 
 
+def test_promessa_somente_entrega_nao_mencao():
+    nao = [
+        "Quer seguir com a matrícula?",
+        "Pra matrícula você vai precisar do RG e do diploma",
+        "O contrato é simples, posso te explicar?",
+        "O link de pagamento vem depois da confirmação.",
+        "Documento complementar pode ser enviado depois.",
+    ]
+    for msg in nao:
+        assert not reply_looks_like_promise(msg), msg
+
+    sim = [
+        "Vou preparar seu contrato agora",
+        "Já te mando o link",
+        "Preparei sua matrícula",
+        "Em alguns minutos te envio o PDF",
+        "Segue o link da matrícula demonstração",
+        "Aqui está o contrato para você olhar",
+    ]
+    for msg in sim:
+        assert reply_looks_like_promise(msg), msg
+
+
 def test_prompt_builder_inclui_schema():
     p = build_system_prompt(
         etapa="abertura",
