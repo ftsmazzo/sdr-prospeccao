@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.knowledge import load_conhecimento_lead, load_regras
+from app.knowledge import load_conhecimento_lead, load_cursos, load_regras
+
+_ETAPAS_SEM_CATALOGO = frozenset({"aluno_atual", "nao_elegivel"})
 
 _ETAPAS_DIR = Path(__file__).resolve().parent.parent / "prompts" / "etapas"
 
@@ -83,6 +85,12 @@ def build_system_prompt(
     regras = load_regras()
     conhecimento = load_conhecimento_lead()
     etapa_txt = load_etapa_prompt(etapa)
+    catalogo = ""
+    if etapa not in _ETAPAS_SEM_CATALOGO:
+        catalogo = (
+            "## Catálogo de cursos\n"
+            f"{load_cursos()}\n\n"
+        )
     state_view = {
         **lead_state,
         "etapa_atual_sistema": etapa,
@@ -121,6 +129,7 @@ def build_system_prompt(
         f"{etapa_txt}\n\n"
         "## Base de conhecimento (fatos para o lead)\n"
         f"{conhecimento}\n\n"
+        f"{catalogo}"
         "## Estado atual do lead (somente leitura; atualize via state_update)\n"
         f"{json.dumps(state_view, ensure_ascii=False, indent=2)}\n"
         f"{JSON_SCHEMA_HINT}\n"

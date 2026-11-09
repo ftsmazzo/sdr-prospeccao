@@ -64,6 +64,20 @@ def load_conhecimento_lead() -> str:
 
 
 @lru_cache
+def load_cursos() -> str:
+    path = _resolve(
+        "prompts/cursos.md",
+        Path(__file__).resolve().parent.parent / "prompts" / "cursos.md",
+    )
+    if not path:
+        return (
+            "Cite somente cursos confirmados com o polo. "
+            "Nunca invente nome, carga horária ou duração."
+        )
+    return _sanitize_for_model(path.read_text(encoding="utf-8"), "cursos")
+
+
+@lru_cache
 def load_knowledge() -> str:
     """Compat: regras + conhecimento (sem notas internas)."""
     return load_regras() + "\n\n" + load_conhecimento_lead()

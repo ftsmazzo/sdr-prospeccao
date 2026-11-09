@@ -170,6 +170,29 @@ def test_prompt_builder_inclui_schema():
     assert "Você é o Edu, consultor" not in p
 
 
+def test_catalogo_cursos_por_etapa():
+    ls = ensure_lead_state({})
+    marker = "Neuropsicopedagogia Institucional e Clínica"
+    com_catalogo = (
+        "abertura",
+        "qualificacao",
+        "recomendacao",
+        "objecao",
+        "fechamento",
+        "contrato_enviado",
+        "handoff_humano",
+    )
+    sem_catalogo = ("aluno_atual", "nao_elegivel")
+    for etapa in com_catalogo:
+        p = build_system_prompt(etapa=etapa, lead_state=ls, meta_flags={})
+        assert marker in p, etapa
+        assert "## Catálogo de cursos" in p, etapa
+    for etapa in sem_catalogo:
+        p = build_system_prompt(etapa=etapa, lead_state=ls, meta_flags={})
+        assert marker not in p, etapa
+        assert "## Catálogo de cursos" not in p, etapa
+
+
 def test_saida_handoff_condicao_especial_com_aceite():
     meta = _base_recomendacao()
     ls = meta["lead_state"]

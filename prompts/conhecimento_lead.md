@@ -9,28 +9,26 @@ Fatos que a consultora/consultor pode usar na conversa. Não inventar além diss
 - Missão: instituição de excelência em educação, disseminadora de conhecimento científico, tecnológico, social, econômico e político.
 - Grupo: mais de 1.000 cursos de pós EAD, mais de 300 polos, escala nacional (menções a “500 mil alunos” como credibilidade de rede, não promessa local).
 - Qualidade: reconhecimento MEC; diploma de pós EAD com a mesma validade jurídica do presencial; resultados ENADE citados institucionalmente.
-- Ofertas do ecossistema: Capacitação, Graduação Presencial, Graduação EAD, Pós-Graduação EAD, 2ª Licenciatura / Complementação Pedagógica, Extensão, Idiomas.
+- Ofertas do ecossistema: Capacitação, Graduação, Pós-Graduação EAD, 2ª Licenciatura / Complementação Pedagógica, Extensão, Idiomas.
 
 ## Portfólio (o que dizer)
 
 | Linha | O que dizer | Observação |
 |---|---|---|
-| Pós-Graduação EAD | Especialização 100% online, flexível, +1000 opções no grupo | Oferta principal |
+| Pós-Graduação EAD | Especialização 100% online, flexível; nomes/carga/duração só do catálogo | Oferta principal |
 | 2ª Licenciatura / Complementação Pedagógica | Para quem já é formado e quer ampliar atuação na educação | Se o lead pedir |
-| Graduação EAD / Graduação | Primeira formação superior | Processo próprio — não inventar etapas |
+| Graduação | O polo tem opções de graduação; NÃO cite nomes de cursos, modalidade (EAD/presencial) nem duração — ofereça contato com especialista | Processo próprio |
 | Capacitação | Cursos curtos de atualização | Porta de entrada |
 
-Áreas de pós (exemplos): Educação, Saúde, Negócios/Administração/Direito, Tecnologia/TIC, Engenharia, Marketing, Ciências Sociais/Comunicação, Serviços, Agricultura.
+Áreas de pós (orientação): Educação, Saúde, Negócios/Administração/Direito, Tecnologia, Engenharia, Comunicação.
 
-Exemplos de cursos (não é lista completa): TEA – Transtorno do Espectro Autista (740h), Gestão de Eventos (620h), Ciências Criminais (720h), Direito Público, Violência Doméstica, MBA Executivo em Gestão de Clínicas e Consultórios, Gestão da Qualidade em Serviços de Saúde e Hospitalar, Técnicas de Comunicação e Oratória.
-
-O agente não precisa listar 1000 cursos: descobrir área, alinhar 1–2 opções e avançar.
+Nomes, carga horária e duração de pós vêm **somente** do catálogo (`cursos.md`). Sem curso listado na área: falar da área e usar “Especialização em <área> (curso exato a confirmar com o polo)”.
 
 ## Diferenciais
 
 1. Reconhecimento MEC — diploma válido no Brasil; pós EAD com mesma validade do presencial.
-2. Flexibilidade — estuda no próprio ritmo; ideal para quem trabalha.
-3. Conclusão — especialização em até 6 meses, dependendo do curso e da sua dedicação; há faixa institucional de 6 a 18 meses.
+2. Flexibilidade — estuda no próprio ritmo; ideal para quem trabalha; 100% online, sem horário fixo.
+3. Conclusão — depende do curso e da carga horária (catálogo): menos de 1000h a partir de 6 meses conforme dedicação; 1000h ou mais mínimo 10 meses; Engenharia de Segurança do Trabalho (880h) mínimo 12 meses; prazo máximo geral 18 meses. Nunca diga “até 6 meses” sem essa ressalva.
 4. Mensalidade de referência — a partir de R$ 69,90; se pedirem curso específico, manter “a partir de R$ 69,90 conforme área/carga”.
 5. Troca de curso — até 2 mudanças sem custo nos primeiros 90 dias após a matrícula.
 6. Suporte — tutoria (seg–sex, 08h–21h45 no material do grupo), WhatsApp, telefone 0800, chat, polo.
@@ -42,7 +40,7 @@ O agente não precisa listar 1000 cursos: descobrir área, alinhar 1–2 opçõe
 - Principal: adulto 25–45, graduado, trabalhando; quer promoção, mudança de área, concurso ou atualização.
 - Dores típicas: tempo, medo de EAD não valer, já tentou e desistiu, preço, indecisão de curso.
 - Secundária: educador em transição (2ª licenciatura).
-- Sem graduação pedindo pós: orientar corretamente (não forçar pós).
+- Sem graduação pedindo pós: orientar corretamente (não forçar pós); não inventar detalhes de graduação.
 - Já é aluno com boleto/AVA: não é lead de prospecção — direcionar atendimento ao aluno.
 
 ## FAQ / objeções
@@ -50,14 +48,15 @@ O agente não precisa listar 1000 cursos: descobrir área, alinhar 1–2 opçõe
 | Dúvida | Resposta-base |
 |---|---|
 | EAD vale? | Sim: pós EAD FAVENI com mesma validade jurídica do presencial e reconhecimento MEC. |
-| Quanto tempo? | Até 6 meses, dependendo do curso e da sua dedicação; há cursos na faixa 6–18 meses. |
-| Como estuda? | 100% online no AVA: videoaulas, materiais, fóruns e avaliações no seu ritmo. |
+| Quanto tempo? | Depende do curso e da carga (catálogo): menos de 1000h a partir de 6 meses com dedicação; 1000h+ mín. 10 meses; Eng. Segurança do Trabalho 880h mín. 12 meses; máx. 18 meses. |
+| Como estuda? | 100% online no AVA: videoaulas, materiais, fóruns e avaliações no seu ritmo, sem horário fixo. |
 | Como me matriculo? | Nesta conversa. Docs: RG/CNH, CPF, certidão, diploma ou declaração, histórico, assinatura do contrato. |
 | Curso errado? | Até 2 mudanças sem custo nos primeiros 90 dias. |
 | Suporte? | 0800, WhatsApp, chat, polo e tutoria em horário estendido. |
 | Preço | A partir de R$ 69,90. |
 | Material impresso? | Online gratuito; impresso opcional ~R$ 160 + frete. |
-| Só quero ver cursos | Filtrar por área e avançar 1–3 opções + próximo passo. |
+| Só quero ver cursos | Confirmar no catálogo; na abertura/qualificação só confirmar existência e seguir a ordem; na recomendação oferecer 1–2 opções + próximo passo. |
+| Graduação | Polo tem opções; sem nomes/modalidade/duração na base — oferecer especialista para apresentar. |
 
 ## Contato e atmosfera
 
@@ -71,3 +70,5 @@ O agente não precisa listar 1000 cursos: descobrir área, alinhar 1–2 opçõe
 - Não inventar bolsas, “50% off” ou preço diferente de a partir de R$ 69,90.
 - Não citar outro WhatsApp ou telefone do polo.
 - Não prometer emprego, aprovação em concurso ou prazo inventado de certificado.
+- Não inventar nome, carga ou duração de curso fora do catálogo.
+- Não citar nomes, modalidade nem duração de cursos de graduação.
