@@ -11,7 +11,7 @@ from app.clients.openrouter import OpenRouterClient
 from app.clients.stt import SpeechToTextClient
 from app.config import Settings
 from app.followups import get_scheduler
-from app.knowledge import load_knowledge
+from app.knowledge import load_conhecimento_lead, load_regras
 from app.memory import ConversationMemory
 from app.messaging import split_whatsapp_messages
 from app.speech import to_spoken_script
@@ -21,18 +21,10 @@ logger = logging.getLogger("edu.orchestrator")
 SYSTEM_TEMPLATE = """Você é o Edu, consultor de matrícula humanizado da Faveni Polo Catanduva no WhatsApp.
 Objetivo: conduzir o lead até aceitar a matrícula de pós EAD (ou 2ª licenciatura/graduação se pedir), sem alucinar e sem sair do fluxo comercial.
 
-Regras:
-- Português brasileiro, tom caloroso e profissional, mensagens curtas (WhatsApp).
-- Faça UMA pergunta por vez (exceto na coleta de dados de matrícula, abaixo).
-- Use SOMENTE a base de conhecimento abaixo. Não invente preço, bolsa, promoção ou telefone do polo.
-- Mensalidade âncora da demo: a partir de R$ 69,90.
-- Esta conversa JÁ É o atendimento; não redirecione para outro WhatsApp.
-- Se o lead sair do assunto, reconheça com empatia em uma frase e volte ao funil de matrícula.
-- Fluxo: qualificar → recomendar → tratar objeção → fechar.
-- Evite tom de locução/institucional. Empatia calorosa, concreta e humana.
-- Canal: o sistema decide texto ou áudio. Escreva a melhor mensagem; não mencione TTS.
+## Regras de comportamento
+{regras}
 
-## Fechamento — jornada (obrigatório)
+## Fechamento — jornada (obrigatório — fonte única)
 
 Há DOIS caminhos. Nunca misture no mesmo turno.
 
@@ -53,8 +45,8 @@ Só se o lead já tiver dados coletados E aceitar fechar sem pedir contrato, E n
 CHECKOUT_READY|<curso>
 Não invente links — o sistema anexa.
 
-Base de conhecimento:
-{knowledge}
+## Base de conhecimento (fatos para o lead)
+{conhecimento}
 """
 
 # Momentos em que áudio agrega (empatia / fechamento) — não para todo turno
@@ -164,6 +156,59 @@ class Orchestrator:
             meta["last_outbound"] = "text"
         self.memory.set_meta(phone, meta)
 
+    async def merge_inbound_batch(self, batch: list[dict]) -> dict:
+        """Transcreve cada áudio do lote e concatena textos na ordem."""
+        parts: list[str] = []
+        push_name = ""
+        remote_jid = ""
+        message_id = ""
+        has_audio = False
+        has_image = False
+        has_document = False
+        doc_names: list[str] = []
+
+        for item in batch:
+            push_name = item.get("push_name") or push_name
+            if item.get("remote_jid"):
+                remote_jid = item["remote_jid"]
+            if item.get("message_id"):
+                message_id = item["message_id"]
+            if item.get("has_image"):
+                has_image = True
+            if item.get("has_document"):
+                has_document = True
+                fn = (item.get("document_filename") or "").strip()
+                if fn:
+                    doc_names.append(fn)
+
+            text_bit = (item.get("text") or "").strip()
+            if item.get("has_audio") and item.get("media_message"):
+                has_audio = True
+                try:
+                    audio_bytes = await self.evo.download_media(item["media_message"])
+                    transcript = (await self.stt.transcribe(audio_bytes)).strip()
+                    logger.info("áudio transcrito phone=%s text=%r", item.get("phone"), transcript[:120])
+                    if transcript:
+                        parts.append(transcript)
+                    elif text_bit:
+                        parts.append(text_bit)
+                except Exception:
+                    logger.exception("falha STT no lote")
+                    parts.append("[áudio não transcrito]")
+            elif text_bit:
+                parts.append(text_bit)
+
+        return {
+            "text": "\n".join(parts).strip(),
+            "push_name": push_name,
+            "remote_jid": remote_jid,
+            "message_id": message_id,
+            "has_audio": has_audio,
+            "has_image": has_image,
+            "has_document": has_document,
+            "document_filename": ", ".join(doc_names),
+        }
+
     async def handle_inbound(
         self,
         phone: str,
@@ -171,6 +216,9 @@ class Orchestrator:
         *,
         push_name: str = "",
         has_audio: bool = False,
+        has_image: bool = False,
+        has_document: bool = False,
+        document_filename: str = "",
         media_message: dict | None = None,
         message_id: str = "",
         remote_jid: str = "",
@@ -178,8 +226,8 @@ class Orchestrator:
         inbound_audio = bool(has_audio)
         user_text = (text or "").strip()
         started_at = time.monotonic()
-        # Sem presença enquanto processa — o “digitando” só depois do lido
 
+        # Fallback legado: um único áudio sem texto pré-transcrito
         if inbound_audio and not user_text and media_message:
             try:
                 audio_bytes = await self.evo.download_media(media_message)
@@ -203,6 +251,14 @@ class Orchestrator:
                 await self.evo.send_text(phone, fail, delay_ms=0)
                 return fail
 
+        if not user_text and (has_image or has_document):
+            kind = "documento" if has_document else "foto"
+            extra = f" ({document_filename})" if document_filename else ""
+            user_text = (
+                f"[Lead enviou {kind}{extra} sem texto. "
+                "Confirme o recebimento e continue o funil de matrícula.]"
+            )
+
         if not user_text:
             reply = "Não consegui entender bem — me conta em texto ou manda o áudio de novo?"
             await self._human_preamble(
@@ -216,8 +272,10 @@ class Orchestrator:
             await self.evo.send_text(phone, reply, delay_ms=0)
             return reply
 
-        knowledge = load_knowledge()
-        system = SYSTEM_TEMPLATE.format(knowledge=knowledge[:12000])
+        system = SYSTEM_TEMPLATE.format(
+            regras=load_regras(),
+            conhecimento=load_conhecimento_lead(),
+        )
         history = self.memory.get_history(phone)
         messages = [{"role": "system", "content": system}]
         if push_name and not history:
@@ -234,6 +292,16 @@ class Orchestrator:
                     "content": (
                         "O lead mandou um ÁUDIO (já transcrito). Mantenha empatia e calor — "
                         "não fique seco só porque veio áudio. Continua 1 pergunta por vez."
+                    ),
+                }
+            )
+        if has_image or has_document:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "O lead enviou imagem/documento. Confirme o recebimento de forma natural "
+                        "e siga o funil (não diga que vai analisar o arquivo agora)."
                     ),
                 }
             )

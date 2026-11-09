@@ -13,6 +13,9 @@ class ConversationMemory:
     """Histórico curto por telefone. Usa Redis se disponível; senão memória de processo."""
 
     def __init__(self, settings: Settings):
+        self.settings = settings
+        self._ttl = settings.memory_ttl_seconds
+        self._max_messages = settings.memory_max_messages
         self._local: dict[str, list[dict[str, str]]] = {}
         self._redis: redis.Redis | None = None
         if settings.redis_url:
@@ -34,12 +37,13 @@ class ConversationMemory:
             return json.loads(raw)
         return list(self._local.get(phone, []))
 
-    def append(self, phone: str, role: str, content: str, max_turns: int = 20) -> None:
+    def append(self, phone: str, role: str, content: str, max_turns: int | None = None) -> None:
+        limit = max_turns if max_turns is not None else self._max_messages
         history = self.get_history(phone)
         history.append({"role": role, "content": content})
-        history = history[-max_turns:]
+        history = history[-limit:]
         if self._redis:
-            self._redis.setex(self._key(phone), 60 * 60 * 24, json.dumps(history, ensure_ascii=False))
+            self._redis.setex(self._key(phone), self._ttl, json.dumps(history, ensure_ascii=False))
         else:
             self._local[phone] = history
 
@@ -51,7 +55,11 @@ class ConversationMemory:
 
     def set_meta(self, phone: str, meta: dict[str, Any]) -> None:
         if self._redis:
-            self._redis.setex(f"edu:meta:{phone}", 60 * 60 * 24, json.dumps(meta, ensure_ascii=False))
+            self._redis.setex(
+                f"edu:meta:{phone}",
+                self._ttl,
+                json.dumps(meta, ensure_ascii=False),
+            )
             return
         if not hasattr(self, "_meta"):
             self._meta = {}

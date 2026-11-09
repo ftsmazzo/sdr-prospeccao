@@ -23,6 +23,30 @@ Header: `apikey: <EVOLUTION_API_KEY>`
 3. Eventos mínimos: mensagens recebidas (e envio se quiser espelhar status).
 4. Após a demo, restaure o webhook do projeto original.
 
+### Secret do webhook (sem logout / sem QR)
+
+Evolution API ≥ 2.1.1 aceita `headers` no `POST /webhook/set/{instance}`.  
+**Não** use o dashboard se ele não expõe headers — use a API.
+
+Script pronto (você executa; o agente não roda contra a instance):
+
+```bash
+export EVOLUTION_BASE_URL="https://SUA-EVOLUTION"
+export EVOLUTION_API_KEY="..."
+export EVOLUTION_INSTANCE="poli"
+export WEBHOOK_SECRET="cole-aqui-o-mesmo-valor-do-EasyPanel"
+
+chmod +x scripts/evolution_webhook_secret.sh
+./scripts/evolution_webhook_secret.sh show           # consulta + backup
+./scripts/evolution_webhook_secret.sh apply-header   # preferido
+# se headers não funcionarem:
+# ./scripts/evolution_webhook_secret.sh apply-path
+./scripts/evolution_webhook_secret.sh undo           # volta ao backup
+```
+
+No Edu: deixe `WEBHOOK_SECRET_ENFORCE=false` até ver nos logs `secret=ok`; depois `true`.  
+Admin da API: só header `X-Admin-Secret` (nunca query string).
+
 ### Exemplo curl (ajuste BASE / INSTANCE / KEY)
 
 ```bash

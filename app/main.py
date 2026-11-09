@@ -1,15 +1,17 @@
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.checkout import confirm_checkout, get_checkout
 from app.config import get_settings
 from app.followups import followup_worker
+from app.inbound_buffer import get_inbound_buffer, inbound_worker
 from app.orchestrator import Orchestrator
 from app.webhook_parse import parse_incoming
 
@@ -17,27 +19,45 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("edu")
 
 
+async def _process_batch(phone: str, batch: list[dict]) -> None:
+    try:
+        orch = Orchestrator(get_settings())
+        merged = await orch.merge_inbound_batch(batch)
+        await orch.handle_inbound(
+            phone,
+            merged["text"],
+            push_name=merged.get("push_name") or "",
+            has_audio=bool(merged.get("has_audio")),
+            has_image=bool(merged.get("has_image")),
+            has_document=bool(merged.get("has_document")),
+            document_filename=merged.get("document_filename") or "",
+            message_id=merged.get("message_id") or "",
+            remote_jid=merged.get("remote_jid") or "",
+        )
+    except Exception:
+        logger.exception("falha ao processar lote de %s", phone)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     stop = asyncio.Event()
-    task = asyncio.create_task(followup_worker(stop), name="followup-worker")
-    logger.info("follow-up worker task criada")
+    tasks = [
+        asyncio.create_task(followup_worker(stop), name="followup-worker"),
+        asyncio.create_task(inbound_worker(stop, _process_batch), name="inbound-worker"),
+    ]
+    logger.info("workers followup + inbound criados")
     try:
         yield
     finally:
         stop.set()
-        await task
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.4.2", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.5.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
-def _orchestrator() -> Orchestrator:
-    return Orchestrator(get_settings())
 
 
 @app.get("/health")
@@ -46,19 +66,56 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.4.2",
+        "version": "0.5.0",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
         "followup_delay_seconds": settings.followup_delay_seconds,
+        "webhook_secret_enforce": settings.webhook_secret_enforce,
+        "inbound_debounce_seconds": settings.inbound_debounce_seconds,
         "redis": bool(settings.redis_url),
     }
 
 
 def _admin_authorized(request: Request) -> bool:
     settings = get_settings()
-    secret = request.headers.get("X-Admin-Secret") or request.query_params.get("secret") or ""
-    return bool(settings.webhook_secret and secret == settings.webhook_secret)
+    provided = request.headers.get("X-Admin-Secret") or ""
+    expected = settings.webhook_secret or ""
+    if not expected or not provided:
+        return False
+    return secrets.compare_digest(provided, expected)
+
+
+def _extract_webhook_secret(request: Request, path_secret: str | None = None) -> str:
+    return (
+        request.headers.get("X-Webhook-Secret")
+        or (path_secret or "")
+        or ""
+    )
+
+
+def _webhook_secret_ok(provided: str) -> tuple[bool, str]:
+    """Retorna (allowed, reason). Com enforce=false, always allowed (pode avisar)."""
+    settings = get_settings()
+    expected = settings.webhook_secret or ""
+    if not expected:
+        if settings.webhook_secret_enforce:
+            return False, "webhook_secret_not_configured"
+        logger.warning("WEBHOOK_SECRET vazio — aceitando (enforce=false)")
+        return True, "no_secret_configured"
+
+    match = bool(provided) and secrets.compare_digest(provided, expected)
+    if match:
+        return True, "ok"
+
+    if settings.webhook_secret_enforce:
+        return False, "invalid_secret"
+
+    logger.warning(
+        "webhook secret missing/mismatch (enforce=false) — aceitando; provided=%s",
+        "set" if provided else "empty",
+    )
+    return True, "mismatch_soft"
 
 
 @app.get("/admin/followups")
@@ -89,7 +146,7 @@ async def list_followups(request: Request):
 
 @app.post("/admin/reset-memory")
 async def reset_memory(request: Request):
-    """Limpa histórico Redis + follow-ups. Header: X-Admin-Secret = WEBHOOK_SECRET."""
+    """Limpa histórico Redis + follow-ups. Header: X-Admin-Secret."""
     if not _admin_authorized(request):
         return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
 
@@ -142,51 +199,45 @@ async def reset_memory(request: Request):
     }
 
 
-async def _process_message(
-    phone: str,
-    text: str,
-    push_name: str,
-    has_audio: bool,
-    media_message: dict | None,
-    message_id: str,
-    remote_jid: str,
-) -> None:
-    try:
-        orch = _orchestrator()
-        await orch.handle_inbound(
-            phone,
-            text,
-            push_name=push_name,
-            has_audio=has_audio,
-            media_message=media_message,
-            message_id=message_id,
-            remote_jid=remote_jid,
-        )
-    except Exception:
-        logger.exception("falha ao processar mensagem de %s", phone)
+async def _handle_evolution_webhook(request: Request, path_secret: str | None = None):
+    provided = _extract_webhook_secret(request, path_secret)
+    ok, reason = _webhook_secret_ok(provided)
+    if not ok:
+        return JSONResponse({"ok": False, "error": reason}, status_code=401)
 
-
-@app.post("/webhooks/evolution")
-async def evolution_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()
     event = payload.get("event") or payload.get("type")
-    logger.info("evolution webhook event=%s", event)
+    logger.info("evolution webhook event=%s secret=%s", event, reason)
 
     incoming = parse_incoming(payload)
     if not incoming:
         return JSONResponse({"ok": True, "ignored": True, "event": event})
 
-    background_tasks.add_task(
-        _process_message,
-        incoming["phone"],
-        incoming["text"],
-        incoming["push_name"],
-        incoming["has_audio"],
-        incoming.get("media_message"),
-        incoming.get("message_id") or "",
-        incoming.get("remote_jid") or "",
+    get_inbound_buffer().enqueue(
+        {
+            "phone": incoming["phone"],
+            "text": incoming.get("text") or "",
+            "push_name": incoming.get("push_name") or "",
+            "has_audio": bool(incoming.get("has_audio")),
+            "has_image": bool(incoming.get("has_image")),
+            "has_document": bool(incoming.get("has_document")),
+            "document_filename": incoming.get("document_filename") or "",
+            "message_id": incoming.get("message_id") or "",
+            "remote_jid": incoming.get("remote_jid") or "",
+            "media_message": incoming.get("media_message"),
+        }
     )
-    return JSONResponse({"ok": True, "queued": True, "event": event})
+    return JSONResponse({"ok": True, "queued": True, "debounced": True, "event": event})
+
+
+@app.post("/webhooks/evolution")
+async def evolution_webhook(request: Request):
+    return await _handle_evolution_webhook(request)
+
+
+@app.post("/webhooks/evolution/{path_secret}")
+async def evolution_webhook_with_secret(path_secret: str, request: Request):
+    return await _handle_evolution_webhook(request, path_secret=path_secret)
 
 
 @app.get("/checkout/{token}", response_class=HTMLResponse)

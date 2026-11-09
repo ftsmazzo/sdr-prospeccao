@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     public_base_url: str = "https://sdr-prospeccao-api.kxryyk.easypanel.host"
     webhook_secret: str = ""
+    # false = aceita e só avisa no log; true = 401 se secret inválido
+    webhook_secret_enforce: bool = False
 
     database_url: str = ""
     redis_url: str = ""
@@ -24,27 +26,29 @@ class Settings(BaseSettings):
 
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
-    # v4 = melhor qualidade; style alto = “vídeo de IA” (evitar)
     elevenlabs_model_id: str = "eleven_v4"
-    # stability médio-baixo; style BAIXO; speed ~1.05 evita cadência pausada
     elevenlabs_stability: float = 0.4
     elevenlabs_similarity: float = 0.75
     elevenlabs_style: float = 0.1
     elevenlabs_speed: float = 1.05
 
-    # tempo "sem ação" antes de marcar como lida (ms)
     human_idle_min_ms: int = 10000
     human_idle_max_ms: int = 15000
-    # quanto tempo mostra digitando / gravando antes de enviar
     typing_min_ms: int = 2500
     typing_max_ms: int = 6000
-    # legado (não usado no timing novo; mantido por compat de env)
     reply_delay_min_ms: int = 3200
     reply_delay_max_ms: int = 7000
 
-    # follow-up de documento prometido (segundos) — default 15 min
     followup_delay_seconds: int = 900
+    inbound_debounce_seconds: float = 7.0
 
+    # TTL memória conversa/meta (segundos) — 30 dias
+    memory_ttl_seconds: int = 60 * 60 * 24 * 30
+    memory_max_messages: int = 30
+
+    regras_path: str = "prompts/regras.md"
+    conhecimento_path: str = "prompts/conhecimento_lead.md"
+    # legado / stub
     knowledge_path: str = "docs/CONHECIMENTO-AGENTE-FAVENI.md"
 
 
