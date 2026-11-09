@@ -33,6 +33,35 @@ class FollowUpScheduler:
                 logger.warning("Redis indisponível para follow-ups: %s", exc)
                 self._redis = None
 
+    def clear_for_phone(self, phone: str) -> int:
+        """Remove follow-ups pendentes de um telefone."""
+        removed = 0
+        if self._redis:
+            raw_items = self._redis.zrange(REDIS_KEY, 0, -1)
+            for raw in raw_items:
+                try:
+                    job = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if job.get("phone") == phone:
+                    removed += int(self._redis.zrem(REDIS_KEY, raw))
+        keep = []
+        for job in self._local:
+            if job.get("phone") == phone:
+                removed += 1
+            else:
+                keep.append(job)
+        self._local = keep
+        return removed
+
+    def clear_all(self) -> int:
+        removed = 0
+        if self._redis:
+            removed += int(self._redis.delete(REDIS_KEY) or 0)
+        removed += len(self._local)
+        self._local.clear()
+        return removed
+
     def schedule_document(
         self,
         *,

@@ -56,3 +56,33 @@ class ConversationMemory:
         if not hasattr(self, "_meta"):
             self._meta = {}
         self._meta[phone] = meta
+
+    def clear(self, phone: str) -> bool:
+        """Apaga histórico e meta de um telefone."""
+        found = False
+        if self._redis:
+            deleted = self._redis.delete(self._key(phone), f"edu:meta:{phone}")
+            found = bool(deleted)
+        if phone in self._local:
+            del self._local[phone]
+            found = True
+        if hasattr(self, "_meta") and phone in self._meta:
+            del self._meta[phone]
+            found = True
+        return found
+
+    def clear_all(self) -> int:
+        """Apaga todas as conversas Edu (conv + meta). Retorna quantidade de chaves removidas."""
+        removed = 0
+        if self._redis:
+            keys: list[str] = []
+            for pattern in ("edu:conv:*", "edu:meta:*"):
+                keys.extend(self._redis.keys(pattern))
+            if keys:
+                removed = int(self._redis.delete(*keys))
+        removed += len(self._local)
+        self._local.clear()
+        if hasattr(self, "_meta"):
+            removed += len(self._meta)
+            self._meta.clear()
+        return removed
