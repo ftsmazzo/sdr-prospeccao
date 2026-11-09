@@ -1,9 +1,14 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from app.checkout import confirm_checkout, get_checkout
+from app.config import get_settings
+from app.orchestrator import Orchestrator
+from app.webhook_parse import parse_incoming
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("edu")
@@ -15,15 +20,115 @@ if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+def _orchestrator() -> Orchestrator:
+    return Orchestrator(get_settings())
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "edu-sdr", "version": "0.1.0"}
+    settings = get_settings()
+    return {
+        "ok": True,
+        "service": "edu-sdr",
+        "version": "0.1.0",
+        "openrouter": bool(settings.openrouter_api_key),
+        "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
+    }
+
+
+async def _process_message(phone: str, text: str, push_name: str, has_audio: bool) -> None:
+    try:
+        orch = _orchestrator()
+        content = text if text else ""
+        if has_audio and not text:
+            content = ""
+        await orch.handle_inbound(phone, content, push_name=push_name)
+    except Exception:
+        logger.exception("falha ao processar mensagem de %s", phone)
 
 
 @app.post("/webhooks/evolution")
-async def evolution_webhook(request: Request):
-    """Ingresso Evolution — por enquanto só registra o payload (orquestrador na próxima fase)."""
+async def evolution_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()
     event = payload.get("event") or payload.get("type")
-    logger.info("evolution webhook event=%s keys=%s", event, list(payload.keys()))
-    return JSONResponse({"ok": True, "received": True, "event": event})
+    logger.info("evolution webhook event=%s", event)
+
+    incoming = parse_incoming(payload)
+    if not incoming:
+        return JSONResponse({"ok": True, "ignored": True, "event": event})
+
+    background_tasks.add_task(
+        _process_message,
+        incoming["phone"],
+        incoming["text"],
+        incoming["push_name"],
+        incoming["has_audio"],
+    )
+    return JSONResponse({"ok": True, "queued": True, "event": event})
+
+
+@app.get("/checkout/{token}", response_class=HTMLResponse)
+def checkout_page(token: str):
+    session = get_checkout(token)
+    if not session:
+        return HTMLResponse(
+            "<!doctype html><html lang='pt-BR'><body style='font-family:system-ui;padding:2rem'>"
+            "<h1>Link inválido</h1><p>Esta matrícula demo não foi encontrada.</p></body></html>",
+            status_code=404,
+        )
+
+    nome = session.lead_name or "você"
+    if session.confirmed:
+        body = (
+            f"<h1>Matrícula registrada — demonstração</h1>"
+            f"<p>Obrigado, {nome}. Pagamento simulado confirmado para "
+            f"<strong>{session.course_label}</strong>.</p>"
+        )
+    else:
+        body = f"""
+        <h1>Matrícula Faveni — pagamento simulado</h1>
+        <p>Olá, {nome}.</p>
+        <p><strong>Curso:</strong> {session.course_label}</p>
+        <p><strong>Mensalidade:</strong> {session.amount_label}</p>
+        <form method="post" action="/checkout/{token}/confirm">
+          <button type="submit" style="padding:0.9rem 1.4rem;font-size:1rem;cursor:pointer;
+            background:#0b6e4f;color:#fff;border:0;border-radius:8px">
+            Confirmar pagamento (demo)
+          </button>
+        </form>
+        <p style="margin-top:2rem;color:#666;font-size:0.9rem">
+          Simulação para demonstração — sem cobrança real.
+        </p>
+        """
+
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Matrícula Faveni — pagamento simulado</title>
+</head>
+<body style="font-family:Georgia,serif;background:#f7f4ef;color:#1c1c1c;margin:0">
+  <main style="max-width:32rem;margin:0 auto;padding:2.5rem 1.25rem">{body}</main>
+</body>
+</html>"""
+    )
+
+
+@app.post("/checkout/{token}/confirm", response_class=HTMLResponse)
+def checkout_confirm(token: str):
+    session = confirm_checkout(token)
+    if not session:
+        return HTMLResponse("<h1>Link inválido</h1>", status_code=404)
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Matrícula confirmada</title></head>
+<body style="font-family:Georgia,serif;background:#f7f4ef;padding:2.5rem 1.25rem;max-width:32rem;margin:0 auto">
+  <h1>Matrícula registrada — demonstração</h1>
+  <p>Pagamento simulado confirmado para <strong>{session.course_label}</strong>.</p>
+  <p>Pode voltar ao WhatsApp — o Edu continua te acompanhando.</p>
+</body></html>"""
+    )
