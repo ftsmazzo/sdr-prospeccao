@@ -1,0 +1,120 @@
+- id: enfermeira_estetica_tempo
+  nome: Mariana
+  perfil: Enfermeira, 32 anos, graduada, trabalha em hospital
+  objetivo: Pós em estética / Enfermagem em Estética
+  objecao: vou_pensar por falta de tempo
+  estilo: mensagens curtas e naturais
+  fecha_quando: se mostrarem flexibilidade de ritmo e ela se sentir segura
+  desiste_quando: se pressionarem demais ou inventarem desconto
+  primeira_mensagem: Oi, quero algo na área da saúde, talvez estética
+
+- id: professora_psico_preco
+  nome: Juliana
+  perfil: Professora do ensino fundamental, graduada em pedagogia
+  objetivo: Psicopedagogia Institucional e Clínica
+  objecao: preço
+  estilo: formal, frases completas
+  fecha_quando: se o valor de referência fizer sentido com o objetivo
+  desiste_quando: se inventarem desconto ou forem agressivas
+  primeira_mensagem: Boa tarde. Tenho interesse em Psicopedagogia.
+
+- id: sem_graduacao_autismo
+  nome: Lucas
+  perfil: 24 anos, sem graduação, quer trabalhar com autismo
+  objetivo: Pós em autismo (ainda sem base)
+  objecao: não elegível
+  estilo: curto, informal
+  fecha_quando: se encaminharem certo para graduação/capacitação
+  desiste_quando: se insistirem em matricular em pós
+  primeira_mensagem: Quero fazer pós em autismo
+
+- id: tecnico_enfermagem_cursando
+  nome: Rafaela
+  perfil: Técnica de enfermagem; acha que técnico conta como graduação / está cursando
+  objetivo: Pós na saúde
+  objecao: graduacao cursando / nao elegivel temporario
+  estilo: mensagens picadas
+  fecha_quando: se explicarem com empatia o que falta para a pós
+  desiste_quando: se tratarem mal ou mentirem
+  primeira_mensagem: oi
+  # segunda virá do LLM; seed só a primeira — estilo picado no restante
+
+- id: desconto_duas_vezes
+  nome: Camila
+  perfil: Graduada, decidida pelo TEA
+  objetivo: TEA – Transtorno do Espectro Autista
+  objecao: pede desconto duas vezes
+  estilo: direto
+  fecha_quando: se mantiverem o valor de referência com clareza
+  desiste_quando: se inventarem bolsa
+  primeira_mensagem: Quero a pós de TEA. Tem desconto?
+
+- id: desconfiado_ead
+  nome: Roberto
+  perfil: Graduado, desconfiado de EAD
+  objetivo: Pós em gestão
+  objecao: validade_ead — EAD vale mesmo?
+  estilo: formal
+  fecha_quando: se explicarem MEC / validade jurídica
+  desiste_quando: se enrolarem ou inventarem selo
+  primeira_mensagem: Estou interessado, mas EAD vale mesmo?
+
+- id: precisa_marido
+  nome: Fernanda
+  perfil: Graduada, quer educação especial
+  objetivo: Educação Especial e Inclusiva
+  objecao: conjuge — precisa falar com o marido
+  estilo: educado, médio
+  fecha_quando: se derem resumo para encaminhar e combinarem retorno
+  desiste_quando: se pressionarem para decidir na hora
+  primeira_mensagem: Gostei da Educação Especial, mas preciso falar com meu marido
+
+- id: ja_tentou_desistiu
+  nome: Paulo
+  perfil: Graduado, já começou outra pós e abandonou
+  objetivo: Docência do Ensino Superior
+  objecao: ja_tentei
+  estilo: com erros de digitação
+  fecha_quando: se falarem de ritmo flexível, tutoria e troca em 90 dias
+  desiste_quando: se minimizarem o medo dele
+  primeira_mensagem: ja tentei uma pos e desisti, sera q consigo mesmo?
+
+- id: aluno_atual_boleto
+  nome: Carla
+  perfil: Já é aluna Faveni, problema com boleto
+  objetivo: resolver boleto (não é lead de pós nova)
+  objecao: aluno_atual
+  estilo: irritado curto
+  fecha_quando: se direcionarem ao atendimento ao aluno sem pitch
+  desiste_quando: se tentarem vender outra matrícula
+  primeira_mensagem: meu boleto nao aparece no portal, sou aluna
+
+- id: curso_fora_catalogo_uti
+  nome: André
+  perfil: Enfermeiro graduado
+  objetivo: Pós em UTI (não está no catálogo)
+  objecao: curso inexistente na lista
+  estilo: curto
+  fecha_quando: se confirmarem que o curso exato precisa checar com o polo e oferecer área saúde
+  desiste_quando: se inventarem um curso de UTI
+  primeira_mensagem: Vocês têm pós em UTI?
+
+- id: fechamento_rapido
+  nome: Beatriz Souza
+  perfil: Graduada, já pesquisou, quer Neuropsicopedagogia
+  objetivo: fechar rápido
+  objecao: nenhuma forte
+  estilo: objetivo
+  fecha_quando: assim que pedirem dados, manda nome CPF e nascimento
+  desiste_quando: se enrolarem demais
+  primeira_mensagem: Quero Neuropsicopedagogia Institucional e Clínica, já decidi, como faço a matrícula?
+
+- id: irritado_demora
+  nome: Tiago
+  perfil: Graduado, impaciente
+  objetivo: IA para negócios
+  objecao: lead_irritado / demora
+  estilo: mensagens picadas, tom seco
+  fecha_quando: se forem objetivas e rápidas
+  desiste_quando: se alongarem com enrolação
+  primeira_mensagem: oi
