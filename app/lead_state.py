@@ -152,7 +152,11 @@ def ensure_lead_state(meta: dict[str, Any]) -> dict[str, Any]:
                 cats.append(c)
         ls["objecoes_levantadas"] = cats
         ls["objecao_ativa"] = _norm_categoria(ls.get("objecao_ativa"))
+        # flags de turno — não ficam sticky no Redis entre mensagens
         ls["perguntou_desconto"] = False
+        ls["pediu_desconto_ou_condicao"] = False
+        ls["duvida_juridica"] = False
+        ls["lead_irritado"] = False
         meta["lead_state"] = ls
         return ls
 
@@ -288,8 +292,16 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
     prev = etapa
     prev_ativa = ls.pop("_prev_objecao_ativa", ls.get("objecao_ativa"))
 
+    # Flags de turno (como perguntou_desconto): avaliar e zerar
     perguntou = bool(ls.get("perguntou_desconto"))
+    pediu_condicao = bool(ls.get("pediu_desconto_ou_condicao"))
+    duvida_juridica = bool(ls.get("duvida_juridica"))
+    lead_irritado = bool(ls.get("lead_irritado"))
     ls["perguntou_desconto"] = False
+    ls["pediu_desconto_ou_condicao"] = False
+    ls["duvida_juridica"] = False
+    ls["lead_irritado"] = False
+
     mark_desconto_respondido = False
     if perguntou:
         if meta.get("desconto_respondido"):
@@ -297,20 +309,19 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
         _ensure_preco_objection(ls)
         mark_desconto_respondido = True
 
-    if ls.get("pediu_desconto_ou_condicao"):
-        if mark_desconto_respondido:
-            meta["desconto_respondido"] = True
-        return _enter_handoff(meta, "condicao_especial")
-    if ls.get("duvida_juridica"):
-        if mark_desconto_respondido:
-            meta["desconto_respondido"] = True
-        return _enter_handoff(meta, "duvida_juridica")
-    if ls.get("lead_irritado"):
-        if mark_desconto_respondido:
-            meta["desconto_respondido"] = True
-        return _enter_handoff(meta, "lead_irritado")
-
+    # Já em handoff: etapa mantém; flags novas reforçam, sem mexer em etapa_antes_handoff
     if prev == "handoff_humano":
+        if pediu_condicao or duvida_juridica or lead_irritado:
+            if pediu_condicao:
+                meta["handoff_reason"] = "condicao_especial"
+            elif duvida_juridica:
+                meta["handoff_reason"] = "duvida_juridica"
+            else:
+                meta["handoff_reason"] = "lead_irritado"
+            meta["etapa"] = "handoff_humano"
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "handoff_humano"
         if ls.get("curso_escolhido") and ls.get("aceite_matricula") and not ls.get("objecao_ativa"):
             _clear_handoff_flags(ls, meta)
             meta["etapa"] = "fechamento"
@@ -321,6 +332,20 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
         if mark_desconto_respondido:
             meta["desconto_respondido"] = True
         return "handoff_humano"
+
+    # Entrada em handoff a partir de outras etapas
+    if pediu_condicao:
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return _enter_handoff(meta, "condicao_especial")
+    if duvida_juridica:
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return _enter_handoff(meta, "duvida_juridica")
+    if lead_irritado:
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return _enter_handoff(meta, "lead_irritado")
 
     if ls.get("e_aluno_atual"):
         meta["etapa"] = "aluno_atual"

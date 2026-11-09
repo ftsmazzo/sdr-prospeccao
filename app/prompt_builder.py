@@ -46,7 +46,8 @@ Regras do state_update:
 - objecao_ativa = categoria quando o lead levanta uma objeção; null quando ela foi respondida e o lead não voltou a ela
 - perguntou_desconto = true SOMENTE se nesta mensagem o lead pediu desconto, abatimento ou valor menor
   ("achei caro" sem pedir desconto = só objecao_ativa preco, perguntou_desconto false)
-- pediu_desconto_ou_condicao = true SOMENTE para condição específica (corporativo, parcelamento diferente, bolsa)
+- pediu_desconto_ou_condicao = true SOMENTE para condição específica (corporativo, parcelamento diferente, bolsa) — flag de TURNO
+- duvida_juridica / lead_irritado = true só neste turno se aplicável (não precisa reenviar false)
 - curso_recomendado = o que VOCÊ sugeriu; curso_escolhido = só o que o LEAD escolheu
 - aceite_matricula = true SOMENTE se o lead disse explicitamente que quer seguir com a matrícula daquele curso
 - e_aluno_atual = true SOMENTE se o lead diz que já é aluno / problema em curso em andamento (boleto de matrícula nova NÃO conta)

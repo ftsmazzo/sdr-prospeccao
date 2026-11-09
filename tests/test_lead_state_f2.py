@@ -165,6 +165,38 @@ def test_prompt_builder_inclui_schema():
     assert "objecao_ativa" in p
 
 
+def test_saida_handoff_condicao_especial_com_aceite():
+    meta = _base_recomendacao()
+    ls = meta["lead_state"]
+    antes = meta["etapa"]
+    merge_state_update(ls, {"pediu_desconto_ou_condicao": True})
+    advance_etapa(meta)
+    assert meta["etapa"] == "handoff_humano"
+    assert meta["handoff_reason"] == "condicao_especial"
+    assert meta.get("etapa_antes_handoff") == antes
+    assert ls["pediu_desconto_ou_condicao"] is False
+    # turno seguinte: modelo só manda curso + aceite (sem reenviar flag false)
+    merge_state_update(ls, {"curso_escolhido": "Neuropsicopedagogia", "aceite_matricula": True})
+    advance_etapa(meta)
+    assert meta["etapa"] == "fechamento"
+    assert meta.get("handoff_reason") is None
+
+
+def test_handoff_irritado_sem_aceite_continua():
+    meta = _base_recomendacao()
+    ls = meta["lead_state"]
+    merge_state_update(ls, {"lead_irritado": True})
+    advance_etapa(meta)
+    assert meta["etapa"] == "handoff_humano"
+    assert meta["handoff_reason"] == "lead_irritado"
+    etapa_antes = meta.get("etapa_antes_handoff")
+    # turno seguinte sem flags e sem aceite
+    merge_state_update(ls, {"aceite_matricula": False, "objecao_ativa": None})
+    advance_etapa(meta)
+    assert meta["etapa"] == "handoff_humano"
+    assert meta.get("etapa_antes_handoff") == etapa_antes
+
+
 if __name__ == "__main__":
     test_parse_and_cpf()
     test_primeiro_desconto_nao_e_handoff()
@@ -175,4 +207,6 @@ if __name__ == "__main__":
     test_objecao_resolvida_volta_recomendacao()
     test_action_bloqueada_e_promessa_sem_acao()
     test_prompt_builder_inclui_schema()
+    test_saida_handoff_condicao_especial_com_aceite()
+    test_handoff_irritado_sem_aceite_continua()
     print("ALL_OK")
