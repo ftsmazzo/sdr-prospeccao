@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     reply_delay_min_ms: int = 3200
     reply_delay_max_ms: int = 7000
 
+    # follow-up de documento prometido (segundos) — default 15 min
+    followup_delay_seconds: int = 900
+
     knowledge_path: str = "docs/CONHECIMENTO-AGENTE-FAVENI.md"
 
 

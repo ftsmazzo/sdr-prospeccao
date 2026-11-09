@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Request
@@ -7,13 +9,27 @@ from fastapi.staticfiles import StaticFiles
 
 from app.checkout import confirm_checkout, get_checkout
 from app.config import get_settings
+from app.followups import followup_worker
 from app.orchestrator import Orchestrator
 from app.webhook_parse import parse_incoming
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("edu")
 
-app = FastAPI(title="Edu SDR", version="0.2.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    stop = asyncio.Event()
+    task = asyncio.create_task(followup_worker(stop), name="followup-worker")
+    logger.info("follow-up worker task criada")
+    try:
+        yield
+    finally:
+        stop.set()
+        await task
+
+
+app = FastAPI(title="Edu SDR", version="0.3.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -30,10 +46,12 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
+        "followup_delay_seconds": settings.followup_delay_seconds,
+        "redis": bool(settings.redis_url),
     }
 
 

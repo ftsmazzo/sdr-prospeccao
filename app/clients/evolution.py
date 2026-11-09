@@ -67,6 +67,35 @@ class EvolutionClient:
                 resp.raise_for_status()
             return resp.json()
 
+    async def send_document(
+        self,
+        phone: str,
+        file_bytes: bytes,
+        *,
+        filename: str,
+        caption: str = "",
+        mimetype: str = "application/pdf",
+        delay_ms: int = 2500,
+    ) -> dict:
+        """Envia documento (PDF) via sendMedia."""
+        url = f"{self.base}/message/sendMedia/{self.instance}"
+        b64 = base64.b64encode(file_bytes).decode("ascii")
+        payload = {
+            "number": self._number(phone),
+            "mediatype": "document",
+            "mimetype": mimetype,
+            "caption": caption,
+            "media": b64,
+            "fileName": filename,
+            "delay": delay_ms,
+        }
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(url, headers=self._headers(), json=payload)
+            if resp.status_code >= 400:
+                logger.error("sendMedia document failed %s %s", resp.status_code, resp.text[:500])
+                resp.raise_for_status()
+            return resp.json()
+
     async def download_media(self, message_payload: dict[str, Any]) -> bytes:
         """Baixa mídia descriptografada (áudio) a partir do objeto da mensagem do webhook."""
         url = f"{self.base}/chat/getBase64FromMediaMessage/{self.instance}"

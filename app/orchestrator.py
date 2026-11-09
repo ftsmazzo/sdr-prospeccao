@@ -8,6 +8,7 @@ from app.clients.evolution import EvolutionClient
 from app.clients.openrouter import OpenRouterClient
 from app.clients.stt import SpeechToTextClient
 from app.config import Settings
+from app.followups import get_scheduler
 from app.knowledge import load_knowledge
 from app.memory import ConversationMemory
 from app.speech import to_spoken_script
@@ -28,6 +29,10 @@ Regras:
 - Quando o lead aceitar matricular / quiser fechar / pedir pagamento, responda confirmando e inclua EXATAMENTE esta linha sozinha no final:
 CHECKOUT_READY|<curso escolhido ou Pós-Graduação EAD Faveni>
 - Não invente links. O sistema anexa o link de checkout depois.
+- Documentos / contrato: se o lead disser que ainda não tem documentos, ou pedir para ver o contrato/informativo antes de fechar, você PODE prometer enviar em alguns minutos — mas SÓ se incluir EXATAMENTE esta linha sozinha no final da resposta (o sistema agenda e envia o PDF depois):
+FOLLOWUP_DOC|<curso ou Pós-Graduação EAD Faveni>
+- Nessa promessa, diga que você prepara e envia em seguida (uns 15 minutos). NÃO diga “me chama se precisar” como despedida que abandona o lead — você volta com o documento.
+- NÃO prometa enviar contrato/documento/PDF se não emitir a linha FOLLOWUP_DOC. Sem o marcador, o envio não acontece.
 - Se o lead mandou áudio, responda de forma natural (como em conversa falada), ainda com 1 pergunta por vez.
 - Evite tom de locução/institucional (“é uma escolha muito importante…”). Empatia curta e concreta.
 
@@ -135,7 +140,7 @@ class Orchestrator:
         messages.append({"role": "user", "content": user_text})
 
         raw = await self.llm.chat(messages)
-        reply, course = self._split_checkout(raw)
+        reply, course, followup_course = self._split_markers(raw)
         if course:
             session = create_checkout(phone, course_label=course, lead_name=push_name)
             link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
@@ -144,6 +149,13 @@ class Orchestrator:
                 f"Perfeito — preparei sua matrícula (demonstração):\n{link}\n\n"
                 "É só abrir e confirmar o pagamento simulado. Qualquer dúvida, estou aqui."
             )
+        if followup_course:
+            get_scheduler().schedule_document(
+                phone=phone,
+                lead_name=push_name or "",
+                course=followup_course,
+            )
+            logger.info("FOLLOWUP_DOC agendado phone=%s course=%s", phone, followup_course)
 
         self.memory.append(phone, "user", user_text)
         self.memory.append(phone, "assistant", reply)
@@ -183,10 +195,19 @@ class Orchestrator:
         return reply
 
     @staticmethod
-    def _split_checkout(raw: str) -> tuple[str, str | None]:
-        match = re.search(r"CHECKOUT_READY\|(.+)$", raw.strip(), flags=re.MULTILINE)
-        if not match:
-            return raw.strip(), None
-        course = match.group(1).strip() or "Pós-Graduação EAD Faveni"
-        cleaned = re.sub(r"\n?CHECKOUT_READY\|.+$", "", raw.strip(), flags=re.MULTILINE).strip()
-        return cleaned, course
+    def _split_markers(raw: str) -> tuple[str, str | None, str | None]:
+        text = raw.strip()
+        course: str | None = None
+        followup: str | None = None
+
+        checkout_match = re.search(r"CHECKOUT_READY\|(.+)$", text, flags=re.MULTILINE)
+        if checkout_match:
+            course = checkout_match.group(1).strip() or "Pós-Graduação EAD Faveni"
+            text = re.sub(r"\n?CHECKOUT_READY\|.+$", "", text, flags=re.MULTILINE).strip()
+
+        followup_match = re.search(r"FOLLOWUP_DOC\|(.+)$", text, flags=re.MULTILINE)
+        if followup_match:
+            followup = followup_match.group(1).strip() or "Pós-Graduação EAD Faveni"
+            text = re.sub(r"\n?FOLLOWUP_DOC\|.+$", "", text, flags=re.MULTILINE).strip()
+
+        return text, course, followup
