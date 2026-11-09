@@ -557,36 +557,103 @@ def reply_looks_like_promise(reply: str) -> bool:
     return any(rx.search(folded) for rx in _PROMISE_DELIVERY_RES)
 
 
-def rewrite_blocked_action_reply(reason: str, reply: str, ls: dict[str, Any]) -> str:
-    """Substitui reply que promete entrega quando a action não pode/não deve rodar."""
-    _ = reply
+def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
+    """Frases prontas alternativas (fallback após regeneração falhar)."""
     if "pending_contract" in reason:
-        return (
-            "Seu contrato já está sendo preparado. Em alguns minutinhos eu te mando "
-            "o informativo por aqui."
-        )
+        return [
+            (
+                "Seu contrato já está sendo preparado. Em alguns minutinhos eu te mando "
+                "o informativo por aqui."
+            ),
+            (
+                "O informativo já está a caminho — assim que sair eu te mando por aqui. "
+                "Enquanto isso, tem alguma dúvida sobre o curso?"
+            ),
+        ]
     if "contract_sent" in reason:
-        return (
-            "O contrato já foi enviado. Se estiver tudo certo, me avisa que seguimos "
-            "com a confirmação da matrícula."
-        )
-    # Preferir o que falta no estado (mesmo se o reason for só etapa)
+        return [
+            (
+                "O contrato já foi enviado. Se estiver tudo certo, me avisa que seguimos "
+                "com a confirmação da matrícula."
+            ),
+            (
+                "Você já recebeu o contrato por aqui. Conseguiu abrir? Se estiver ok, "
+                "seguimos com a confirmação."
+            ),
+        ]
+
+    curso = ls.get("curso_escolhido") or "esse curso"
     if not ls.get("curso_escolhido") or "sem_curso" in reason:
-        return "Antes de eu preparar o contrato, me confirma qual curso você quer seguir?"
+        return [
+            "Antes de eu preparar o contrato, me confirma qual curso você quer seguir?",
+            "Qual especialização você quer seguir? Assim eu te passo as informações certas.",
+            "Me confirma o nome do curso que você escolheu pra eu te orientar no próximo passo?",
+        ]
     if not ls.get("aceite_matricula") or "sem_aceite" in reason:
-        curso = ls.get("curso_escolhido") or "esse curso"
-        return (
-            f"Perfeito — só pra eu seguir certo: você confirma que quer matricular "
-            f"em {curso} agora?"
-        )
-    if reason == "promessa_sem_acao" or "bloqueada etapa" in reason or "etapa=" in reason:
-        return (
-            "Quando estiver pronto, me manda por escrito nome completo, CPF e "
-            "data de nascimento que eu preparo o contrato."
-        )
-    return (
-        "Ainda preciso de uma confirmação sua antes de seguir com documentos. "
-        "Me diz qual curso você quer e se podemos seguir com a matrícula."
+        return [
+            (
+                f"Perfeito — só pra eu seguir certo: você confirma que quer matricular "
+                f"em {curso} agora?"
+            ),
+            (
+                f"Você quer seguir com a matrícula em {curso}, ou ainda prefere "
+                "só tirar dúvidas?"
+            ),
+            (
+                f"Sobre {curso}: é 100% online, a partir de R$ 69,90, com troca de curso "
+                "sem custo em 90 dias. Quer que eu detalhe carga horária e documentos, "
+                "ou prefere seguir com a matrícula?"
+            ),
+        ]
+    if reason in (
+        "promessa_sem_acao",
+        "dados_antes_fechamento",
+        "escassez",
+        "quase_igual",
+    ) or "bloqueada etapa" in reason or "etapa=" in reason:
+        return [
+            (
+                "Quando estiver pronto, me manda por escrito nome completo, CPF e "
+                "data de nascimento que eu preparo o contrato."
+            ),
+            (
+                "Posso te passar o resumo agora: curso escolhido, mensalidade a partir "
+                "de R$ 69,90, 100% online e documentos depois da confirmação. "
+                "O que você ainda quer esclarecer?"
+            ),
+            (
+                "Sem prometer envio por agora: me diz o que você quer saber "
+                "(valor, prazo, documentos ou como funciona o EAD) que eu respondo aqui."
+            ),
+        ]
+    return [
+        (
+            "Ainda preciso de uma confirmação sua antes de seguir com documentos. "
+            "Me diz qual curso você quer e se podemos seguir com a matrícula."
+        ),
+        (
+            "Me conta o que ainda falta pra você se sentir seguro — curso, valor "
+            "ou como funciona o estudo — que eu te respondo direto."
+        ),
+    ]
+
+
+def rewrite_blocked_action_reply(
+    reason: str,
+    reply: str,
+    ls: dict[str, Any],
+    *,
+    avoid: str | None = None,
+) -> str:
+    """Fallback stock após regeneração falhar. Nunca repete o texto em `avoid`."""
+    _ = reply
+    variants = _stock_variants(reason, ls)
+    avoid_norm = (avoid or "").strip()
+    for text in variants:
+        if text.strip() != avoid_norm:
+            return text
+    return variants[-1] if variants else (
+        "Me conta o que você precisa saber agora que eu te respondo por aqui."
     )
 
 

@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import random
+import re
 import time
+from difflib import SequenceMatcher
 
 from app.audio_post import to_whatsapp_voice
 from app.checkout import create_checkout
@@ -55,6 +57,55 @@ AUDIO_KEY_HINTS = (
     "inseguro",
     "obrigad",
 )
+
+_SCARCITY_RES = (
+    re.compile(r"garantir\s+(sua|a|sua\s+própria)\s+vaga", re.IGNORECASE),
+    re.compile(r"últimas?\s+vagas?", re.IGNORECASE),
+    re.compile(r"ultimas?\s+vagas?", re.IGNORECASE),
+    re.compile(r"só\s+hoje|so\s+hoje", re.IGNORECASE),
+    re.compile(r"vagas?\s+limitadas?", re.IGNORECASE),
+)
+
+_REGEN_MOTIVOS = {
+    "promessa_sem_acao": (
+        "Você não pode prometer envio de contrato, PDF ou link agora "
+        "(ação de entrega indisponível neste turno). "
+        "Responda ao que o lead pediu sem prometer entrega futura; "
+        "se ele pediu informações ou um resumo, escreva o resumo NESTA mensagem "
+        "(curso, carga horária do catálogo, a partir de R$ 69,90, 100% online, "
+        "troca de curso em 90 dias, documentos necessários)."
+    ),
+    "dados_antes_fechamento": (
+        "Você NÃO pode pedir nome completo, CPF ou data de nascimento agora — "
+        "isso só na etapa fechamento. Responda ao pedido do lead sem coletar dados pessoais."
+    ),
+    "escassez": (
+        "Não use urgência ou escassez inventada (ex.: garantir vaga, últimas vagas). "
+        "Responda de forma informativa, sem pressionar."
+    ),
+    "quase_igual": (
+        "Sua resposta ficou quase idêntica à anterior. Reescreva com outras palavras "
+        "e avance a conversa com uma pergunta ou próximo passo diferente."
+    ),
+}
+
+
+def _norm_reply(text: str) -> str:
+    t = re.sub(r"\s+", " ", (text or "").strip().casefold())
+    return t
+
+
+def replies_nearly_equal(a: str, b: str, *, threshold: float = 0.92) -> bool:
+    na, nb = _norm_reply(a), _norm_reply(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return SequenceMatcher(None, na, nb).ratio() >= threshold
+
+
+def reply_has_scarcity(text: str) -> bool:
+    return any(rx.search(text or "") for rx in _SCARCITY_RES)
 
 
 class Orchestrator:
@@ -213,8 +264,88 @@ class Orchestrator:
             return parsed2
         return safe_fallback_response(raw2 or raw)
 
-    def _apply_actions(self, phone: str, meta: dict, agent: AgentResponse, push_name: str) -> tuple[str, str | None]:
-        """Executa action permitida. Retorna (reply, course_for_audio)."""
+    def _last_assistant_text(self, phone: str) -> str:
+        history = self.memory.get_history(phone)
+        for item in reversed(history):
+            if item.get("role") == "assistant":
+                return str(item.get("content") or "")
+        return ""
+
+    def _reply_needs_regen(
+        self,
+        reply: str,
+        meta: dict,
+        *,
+        delivery_ran: bool,
+        blocked_promise_reason: str | None,
+        last_assistant: str,
+    ) -> str | None:
+        if blocked_promise_reason:
+            return "promessa_sem_acao"
+        if (
+            not delivery_ran
+            and not meta.get("pending_contract")
+            and reply_looks_like_promise(reply)
+        ):
+            return "promessa_sem_acao"
+        etapa = meta.get("etapa") or ""
+        if etapa != "fechamento" and asks_or_confirms_personal_data(reply):
+            return "dados_antes_fechamento"
+        if reply_has_scarcity(reply):
+            return "escassez"
+        if last_assistant and replies_nearly_equal(reply, last_assistant):
+            return "quase_igual"
+        return None
+
+    def _regen_system_instruction(self, reason: str, meta: dict) -> str:
+        base = _REGEN_MOTIVOS.get(reason) or _REGEN_MOTIVOS["promessa_sem_acao"]
+        ls = meta.get("lead_state") or {}
+        extra = (
+            f" Etapa atual: {meta.get('etapa')}. "
+            f"curso_escolhido={ls.get('curso_escolhido')!r}; "
+            f"aceite_matricula={ls.get('aceite_matricula')}; "
+            f"objecao_ativa={ls.get('objecao_ativa')!r}."
+        )
+        return (
+            f"{base}{extra} "
+            "Responda de novo APENAS com o JSON do schema (reply + state_update + action). "
+            "Na maioria dos casos action=null. Não diga 'garantir vaga'."
+        )
+
+    async def _regenerate_reply(
+        self,
+        messages: list[dict],
+        meta: dict,
+        reason: str,
+    ) -> str:
+        regen_messages = list(messages) + [
+            {"role": "system", "content": self._regen_system_instruction(reason, meta)}
+        ]
+        agent = await self._call_agent_json(regen_messages)
+        # não remesclar state/actions de entrega — só o texto
+        reply = (agent.reply or "").strip()
+        if looks_like_json(reply):
+            return ""
+        return reply
+
+    def _apply_stock_fallback(self, meta: dict, reason: str, reply: str) -> str:
+        ls = meta.get("lead_state") or {}
+        stock_reason = reason
+        if reason == "promessa_sem_acao":
+            if not ls.get("curso_escolhido"):
+                stock_reason = "sem_curso"
+            elif not ls.get("aceite_matricula"):
+                stock_reason = "sem_aceite"
+        avoid = str(meta.get("last_stock_reply") or "")
+        stock = rewrite_blocked_action_reply(stock_reason, reply, ls, avoid=avoid)
+        meta["last_stock_reply"] = stock
+        logger.info("stock fallback reason=%s avoid_dup=%s", stock_reason, bool(avoid))
+        return stock
+
+    def _apply_actions(
+        self, phone: str, meta: dict, agent: AgentResponse, push_name: str
+    ) -> tuple[str, str | None, str | None, bool]:
+        """Executa action. Retorna (reply, course, blocked_promise_reason, delivery_ran)."""
         reply = agent.reply.strip()
         if looks_like_json(reply):
             reply = "Só um instante, me confirma de novo o que você precisa?"
@@ -222,12 +353,11 @@ class Orchestrator:
         action = agent.action
         data = agent.action_data or {}
         ok, reason = can_run_action(meta, action)
-        blocked_delivery = False
-        blocked_reason = reason
+        blocked_promise_reason: str | None = None
         if action and not ok:
             logger.info("action ignorada phone=%s reason=%s", phone, reason)
             if action in ("FOLLOWUP_DOC", "CHECKOUT_READY") and reply_looks_like_promise(reply):
-                blocked_delivery = True
+                blocked_promise_reason = reason or "promessa_sem_acao"
             action = None
 
         course: str | None = None
@@ -292,18 +422,61 @@ class Orchestrator:
             )
             delivery_ran = True
 
-        if blocked_delivery:
-            reply = rewrite_blocked_action_reply(blocked_reason, reply, ls)
-            logger.info("promessa reescrita phone=%s reason=%s", phone, blocked_reason)
-        elif (
+        if (
             not delivery_ran
             and not meta.get("pending_contract")
             and reply_looks_like_promise(reply)
+            and not blocked_promise_reason
         ):
-            reply = rewrite_blocked_action_reply("promessa_sem_acao", reply, ls)
-            logger.info("promessa_sem_acao phone=%s", phone)
+            blocked_promise_reason = "promessa_sem_acao"
 
-        return reply, course
+        # delivery_ran anula bloqueio de promessa (já entregou)
+        if delivery_ran:
+            blocked_promise_reason = None
+
+        return reply, course, blocked_promise_reason, delivery_ran
+
+    async def _finalize_reply(
+        self,
+        *,
+        phone: str,
+        meta: dict,
+        messages: list[dict],
+        reply: str,
+        course: str | None,
+        blocked_promise_reason: str | None,
+        delivery_ran: bool,
+    ) -> str:
+        last_assistant = self._last_assistant_text(phone)
+        reason = self._reply_needs_regen(
+            reply,
+            meta,
+            delivery_ran=delivery_ran,
+            blocked_promise_reason=blocked_promise_reason,
+            last_assistant=last_assistant,
+        )
+        if reason:
+            logger.info("regen reply reason=%s", reason)
+            regenerated = await self._regenerate_reply(messages, meta, reason)
+            if regenerated:
+                still = self._reply_needs_regen(
+                    regenerated,
+                    meta,
+                    delivery_ran=False,
+                    blocked_promise_reason=(
+                        "promessa_sem_acao"
+                        if reply_looks_like_promise(regenerated)
+                        else None
+                    ),
+                    last_assistant=last_assistant,
+                )
+                if not still:
+                    return regenerated
+                logger.info("regen ainda viola (%s) — stock", still)
+                return self._apply_stock_fallback(meta, still or reason, regenerated)
+            return self._apply_stock_fallback(meta, reason, reply)
+        return reply
+
     async def handle_inbound(
         self,
         phone: str,
@@ -421,7 +594,18 @@ class Orchestrator:
         if meta.get("etapa") == "handoff_humano":
             logger.info("handoff_humano phone=%s summary=%s", phone, summarize_lead(meta))
 
-        reply, course = self._apply_actions(phone, meta, agent, push_name)
+        reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
+            phone, meta, agent, push_name
+        )
+        reply = await self._finalize_reply(
+            phone=phone,
+            meta=meta,
+            messages=messages,
+            reply=reply,
+            course=course,
+            blocked_promise_reason=blocked_promise_reason,
+            delivery_ran=delivery_ran,
+        )
         self.memory.set_meta(phone, meta)
 
         self.memory.append(phone, "user", user_text)
