@@ -33,27 +33,30 @@ CHECKOUT_READY|<curso escolhido ou Pós-Graduação EAD Faveni>
 FOLLOWUP_DOC|<curso ou Pós-Graduação EAD Faveni>
 - Nessa promessa, diga que você prepara e envia em seguida (uns 15 minutos). NÃO diga “me chama se precisar” como despedida que abandona o lead — você volta com o documento.
 - NÃO prometa enviar contrato/documento/PDF se não emitir a linha FOLLOWUP_DOC. Sem o marcador, o envio não acontece.
-- Se o lead mandou áudio, responda de forma natural (como em conversa falada), ainda com 1 pergunta por vez.
-- Evite tom de locução/institucional (“é uma escolha muito importante…”). Empatia curta e concreta.
+- Evite tom de locução/institucional (“é uma escolha muito importante…”). Empatia calorosa, concreta e humana.
+- Canal: o sistema decide se envia texto ou áudio. Escreva sempre a melhor mensagem de WhatsApp (calor + clareza). Não mencione que é áudio/TTS.
 
 Base de conhecimento:
 {knowledge}
 """
 
-KEY_MOMENT_HINTS = (
+# Momentos em que áudio agrega (empatia / fechamento) — não para todo turno
+AUDIO_KEY_HINTS = (
     "matricul",
     "fech",
     "pagamento",
     "checkout",
     "quero sim",
-    "vamos",
-    "pode ser",
+    "vamos juntos",
     "aceito",
-    "tea",
-    "objeção",
     "caro",
     "preço",
     "mensalidade",
+    "medo",
+    "receio",
+    "não sei se",
+    "inseguro",
+    "obrigad",
 )
 
 
@@ -73,15 +76,49 @@ class Orchestrator:
         hi = self.settings.reply_delay_max_ms
         return max(lo, min(hi, approx + random.randint(-400, 600)))
 
-    def _should_reply_audio(self, *, inbound_was_audio: bool, reply: str, course: str | None) -> bool:
+    def _should_reply_audio(
+        self,
+        *,
+        phone: str,
+        inbound_was_audio: bool,
+        reply: str,
+        course: str | None,
+    ) -> bool:
+        """Alterna áudio/texto: não espelha áudio em todo turno (fica seco e artificial)."""
         if not self.tts.enabled:
             return False
-        if inbound_was_audio:
-            return True
-        if course:
-            return True
+
+        meta = self.memory.get_meta(phone)
+        consecutive_audio = int(meta.get("consecutive_audio_out", 0) or 0)
         low = reply.lower()
-        return any(h in low for h in KEY_MOMENT_HINTS)
+        key_moment = bool(course) or any(h in low for h in AUDIO_KEY_HINTS)
+
+        # Evita rajada de áudios: após 1 áudio, força texto no próximo (exceto fechamento)
+        if consecutive_audio >= 1 and not course:
+            return False
+
+        # Lead mandou áudio: responde áudio no máximo 1x seguidas, ou em momento-chave
+        if inbound_was_audio:
+            if consecutive_audio == 0:
+                # 70% áudio na primeira resposta a um áudio; senão texto (variação natural)
+                return random.random() < 0.7 or key_moment
+            return key_moment
+
+        # Lead mandou texto: áudio só em momento-chave (fechamento / empatia forte)
+        if key_moment and consecutive_audio == 0:
+            return random.random() < 0.55
+
+        return False
+
+    def _remember_outbound_mode(self, phone: str, *, used_audio: bool) -> None:
+        meta = self.memory.get_meta(phone)
+        if used_audio:
+            meta["consecutive_audio_out"] = int(meta.get("consecutive_audio_out", 0) or 0) + 1
+            meta["last_outbound"] = "audio"
+        else:
+            meta["consecutive_audio_out"] = 0
+            meta["last_outbound"] = "text"
+        self.memory.set_meta(phone, meta)
 
     async def handle_inbound(
         self,
@@ -133,7 +170,10 @@ class Orchestrator:
             messages.append(
                 {
                     "role": "system",
-                    "content": "O lead acabou de mandar um ÁUDIO (já transcrito). Responda de forma falada/natural.",
+                    "content": (
+                        "O lead mandou um ÁUDIO (já transcrito). Mantenha empatia e calor — "
+                        "não fique seco só porque veio áudio. Continua 1 pergunta por vez."
+                    ),
                 }
             )
         messages.extend(history)
@@ -164,34 +204,35 @@ class Orchestrator:
         await self.evo.send_presence(phone, delay_ms=delay)
 
         want_audio = self._should_reply_audio(
-            inbound_was_audio=inbound_audio, reply=reply, course=course
+            phone=phone,
+            inbound_was_audio=inbound_audio,
+            reply=reply,
+            course=course,
         )
         if want_audio:
             try:
-                # TTS usa roteiro FALADO (não o texto escrito do chat)
                 spoken = await to_spoken_script(self.llm, reply)
                 logger.info("tts spoken=%r", spoken[:160])
                 audio = await self.tts.synthesize(spoken)
                 await self.evo.send_audio(phone, audio, delay_ms=1600)
-                if course or "http" in reply:
-                    # garante o link clicável em texto
-                    link_only = "\n".join(
-                        line for line in reply.splitlines() if "http" in line or "checkout" in line.lower()
+                self._remember_outbound_mode(phone, used_audio=True)
+
+                # Links / checklist: texto complementar (áudio não carrega URL bem)
+                if "http" in reply:
+                    links = "\n".join(
+                        l for l in reply.splitlines() if "http" in l
                     )
-                    if not link_only and course:
-                        link_only = reply
-                    if "http" in reply:
-                        await self.evo.send_text(
-                            phone,
-                            "Te mandei também o link por escrito pra ficar fácil de abrir:\n"
-                            + "\n".join(l for l in reply.splitlines() if l.startswith("http") or "http" in l),
-                            delay_ms=2200,
-                        )
+                    await self.evo.send_text(
+                        phone,
+                        "Te mando o link por escrito também:\n" + links,
+                        delay_ms=2200,
+                    )
                 return reply
             except Exception:
                 logger.exception("falha TTS; caindo para texto")
 
         await self.evo.send_text(phone, reply, delay_ms=delay)
+        self._remember_outbound_mode(phone, used_audio=False)
         return reply
 
     @staticmethod

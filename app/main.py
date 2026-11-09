@@ -29,7 +29,7 @@ async def lifespan(_app: FastAPI):
         await task
 
 
-app = FastAPI(title="Edu SDR", version="0.3.1", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.3.2", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():

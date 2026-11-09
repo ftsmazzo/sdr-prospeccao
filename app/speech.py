@@ -1,4 +1,4 @@
-"""Preparo de texto para TTS — evita fala 'vídeo de IA'."""
+"""Preparo de texto para TTS — preserva calor humano, evita locução de vídeo."""
 
 from __future__ import annotations
 
@@ -8,15 +8,18 @@ import httpx
 
 from app.clients.openrouter import OpenRouterClient
 
-SPOKEN_REWRITE_SYSTEM = """Você reescreve mensagens para ÁUDIO de WhatsApp em português do Brasil.
+SPOKEN_REWRITE_SYSTEM = """Você adapta a mensagem do Edu para ÁUDIO de WhatsApp (pt-BR).
 
-Regras obrigatórias:
-- Soa como pessoa real no zap, NÃO como locutora de vídeo/institucional.
-- No máximo 2 frases curtas. Se precisar de pergunta, só UMA no final.
-- Empatia leve e seca (ex.: "entendi"), sem drama ("é uma escolha muito importante...").
-- Evite listas, travessões, reticências longas, emojis e formalidade.
-- Não invente informação. Não inclua links.
-- Saída: só o texto falado, nada mais.
+Objetivo: a pessoa deve SENTIR a mesma empatia e calor do texto original — só que falado.
+
+Regras:
+- Mantenha o tom caloroso e humano. Não deixe seco, frio ou “atendimento robô”.
+- Pode ter até 3 frases curtas. Se houver pergunta, no máximo UMA no final.
+- Preserve acolhimento concreto (“entendo sua preocupação”, “faz sentido”, “fica tranquilo”).
+- Corte só o que não funciona em áudio: links, listas longas, markdown, emojis, marcadores técnicos.
+- Não invente informação nova. Não vire locutora institucional.
+- Não comece com “Olá” se o original não começa assim.
+- Saída: apenas o texto a ser falado.
 """
 
 
@@ -24,6 +27,7 @@ def scrub_for_tts(text: str) -> str:
     t = text
     t = re.sub(r"https?://\S+", "", t)
     t = re.sub(r"CHECKOUT_READY\|.*", "", t)
+    t = re.sub(r"FOLLOWUP_DOC\|.*", "", t)
     t = t.replace("—", ",").replace("–", ",")
     t = t.replace("...", ".")
     t = re.sub(r"[*_`#>]+\s*", "", t)
@@ -34,7 +38,7 @@ def scrub_for_tts(text: str) -> str:
 
 
 async def to_spoken_script(llm: OpenRouterClient, written: str) -> str:
-    """Gera versão falada; se falhar, usa scrub simples."""
+    """Gera versão falada mantendo empatia; se falhar, usa scrub curto."""
     cleaned = scrub_for_tts(written)
     if len(cleaned) < 8:
         return cleaned
@@ -42,17 +46,22 @@ async def to_spoken_script(llm: OpenRouterClient, written: str) -> str:
         spoken = await llm.chat(
             [
                 {"role": "system", "content": SPOKEN_REWRITE_SYSTEM},
-                {"role": "user", "content": cleaned[:700]},
+                {
+                    "role": "user",
+                    "content": (
+                        "Reescreva para áudio preservando o calor desta mensagem:\n\n"
+                        + cleaned[:900]
+                    ),
+                },
             ],
-            temperature=0.4,
+            temperature=0.55,
         )
         spoken = scrub_for_tts(spoken)
-        # hard cap: áudio longo vira cadência de vídeo
-        if len(spoken) > 280:
-            spoken = spoken[:280].rsplit(" ", 1)[0]
+        # áudio um pouco mais longo ok — prioridade é soar humano
+        if len(spoken) > 420:
+            spoken = spoken[:420].rsplit(" ", 1)[0]
         return spoken or cleaned
     except (httpx.HTTPError, RuntimeError, KeyError, IndexError):
-        # fallback local
         parts = re.split(r"(?<=[.!?])\s+", cleaned)
-        short = " ".join(parts[:2]).strip()
-        return short[:280] or cleaned
+        short = " ".join(parts[:3]).strip()
+        return short[:420] or cleaned
