@@ -24,7 +24,13 @@ class Settings(BaseSettings):
 
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
-    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    # v4 = mais expressivo/humanizado; turbo se latência incomodar
+    elevenlabs_model_id: str = "eleven_v4"
+    # 0–1: menor stability = mais emoção; style um pouco >0 deixa mais “vivo”
+    elevenlabs_stability: float = 0.35
+    elevenlabs_similarity: float = 0.8
+    elevenlabs_style: float = 0.35
+    elevenlabs_speed: float = 0.95
 
     # delay humanizado (ms) — typing + envio
     reply_delay_min_ms: int = 3200

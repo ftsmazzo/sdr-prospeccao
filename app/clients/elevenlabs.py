@@ -12,6 +12,10 @@ class ElevenLabsClient:
         self.api_key = settings.elevenlabs_api_key
         self.voice_id = settings.elevenlabs_voice_id
         self.model_id = settings.elevenlabs_model_id
+        self.stability = settings.elevenlabs_stability
+        self.similarity = settings.elevenlabs_similarity
+        self.style = settings.elevenlabs_style
+        self.speed = settings.elevenlabs_speed
 
     @property
     def enabled(self) -> bool:
@@ -30,11 +34,28 @@ class ElevenLabsClient:
         payload = {
             "text": text,
             "model_id": self.model_id,
-            "language_code": "pt",
+            "voice_settings": {
+                # stability mais baixo = mais variação emocional (menos monótono)
+                "stability": self.stability,
+                "similarity_boost": self.similarity,
+                # style > 0 exagera um pouco o “jeito” da voz (mais vivo)
+                "style": self.style,
+                "use_speaker_boost": True,
+                "speed": self.speed,
+            },
         }
+        # language_code só em modelos v3/v4 (não no multilingual_v2)
+        if self.model_id.startswith("eleven_v"):
+            payload["language_code"] = "pt"
+
         async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
+            resp = await client.post(
+                url,
+                headers=headers,
+                params={"output_format": "mp3_44100_128"},
+                json=payload,
+            )
             if resp.status_code >= 400:
-                logger.error("elevenlabs failed %s %s", resp.status_code, resp.text[:400])
+                logger.error("elevenlabs failed %s %s", resp.status_code, resp.text[:500])
                 resp.raise_for_status()
             return resp.content
