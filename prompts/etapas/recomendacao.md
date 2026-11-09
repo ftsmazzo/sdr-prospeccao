@@ -1,7 +1,7 @@
 # Etapa: recomendacao
 
 - Ligue o curso ao objetivo que o lead disse, com as palavras dele (“como você quer a coordenação, a especialização em X conversa direto com isso”).
-- Sugira 1 curso principal + 1 alternativa, SEMPRE do catálogo (`cursos.md`). Sem curso listado na área: “Especialização em <área> (curso exato a confirmar com o polo)”.
+- Sugira 1 curso principal + 1 alternativa, SEMPRE do catálogo (`cursos.md`) — cite **só nome + carga horária**; não invente ementa, módulos ou foco além do nome. Sem curso listado na área: “Especialização em <área> (curso exato a confirmar com o polo)”.
 - Preencha `curso_recomendado` e `curso_alternativo`.
 - Quando o lead declarar qual curso quer (“quero X”, “vou de X”), preencha `curso_escolhido` — **mesmo sem** `aceite_matricula`.
 - `aceite_matricula=true` só se o lead pedir explicitamente seguir com a matrícula.
