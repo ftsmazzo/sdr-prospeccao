@@ -1,9 +1,12 @@
 import logging
+import random
 import re
 
 from app.checkout import create_checkout
+from app.clients.elevenlabs import ElevenLabsClient
 from app.clients.evolution import EvolutionClient
 from app.clients.openrouter import OpenRouterClient
+from app.clients.stt import SpeechToTextClient
 from app.config import Settings
 from app.knowledge import load_knowledge
 from app.memory import ConversationMemory
@@ -24,10 +27,27 @@ Regras:
 - Quando o lead aceitar matricular / quiser fechar / pedir pagamento, responda confirmando e inclua EXATAMENTE esta linha sozinha no final:
 CHECKOUT_READY|<curso escolhido ou Pós-Graduação EAD Faveni>
 - Não invente links. O sistema anexa o link de checkout depois.
+- Se o lead mandou áudio, responda de forma natural (como em conversa falada), ainda com 1 pergunta por vez.
 
 Base de conhecimento:
 {knowledge}
 """
+
+KEY_MOMENT_HINTS = (
+    "matricul",
+    "fech",
+    "pagamento",
+    "checkout",
+    "quero sim",
+    "vamos",
+    "pode ser",
+    "aceito",
+    "tea",
+    "objeção",
+    "caro",
+    "preço",
+    "mensalidade",
+)
 
 
 class Orchestrator:
@@ -35,15 +55,59 @@ class Orchestrator:
         self.settings = settings
         self.llm = OpenRouterClient(settings)
         self.evo = EvolutionClient(settings)
+        self.stt = SpeechToTextClient(settings)
+        self.tts = ElevenLabsClient(settings)
         self.memory = ConversationMemory(settings)
 
-    async def handle_inbound(self, phone: str, text: str, push_name: str = "") -> str:
-        if not text.strip():
-            reply = (
-                "Recebi seu áudio! Por enquanto nesta demo consigo responder melhor por texto — "
-                "me conta em poucas palavras o que você busca: pós, 2ª licenciatura ou graduação?"
-            )
-            await self.evo.send_text(phone, reply)
+    def _human_delay_ms(self, text: str) -> int:
+        # ~35–45ms por caractere, com piso/teto humanizados
+        approx = 2800 + int(len(text) * 40)
+        lo = self.settings.reply_delay_min_ms
+        hi = self.settings.reply_delay_max_ms
+        return max(lo, min(hi, approx + random.randint(-400, 600)))
+
+    def _should_reply_audio(self, *, inbound_was_audio: bool, reply: str, course: str | None) -> bool:
+        if not self.tts.enabled:
+            return False
+        if inbound_was_audio:
+            return True
+        if course:
+            return True
+        low = reply.lower()
+        return any(h in low for h in KEY_MOMENT_HINTS)
+
+    async def handle_inbound(
+        self,
+        phone: str,
+        text: str,
+        *,
+        push_name: str = "",
+        has_audio: bool = False,
+        media_message: dict | None = None,
+    ) -> str:
+        inbound_audio = bool(has_audio)
+        user_text = (text or "").strip()
+
+        # Digitando cedo, enquanto processamos STT/LLM
+        await self.evo.send_presence(phone, delay_ms=5000)
+
+        if inbound_audio and not user_text and media_message:
+            try:
+                audio_bytes = await self.evo.download_media(media_message)
+                user_text = await self.stt.transcribe(audio_bytes)
+                logger.info("áudio transcrito phone=%s text=%r", phone, user_text[:120])
+            except Exception:
+                logger.exception("falha STT")
+                fail = (
+                    "Recebi seu áudio, Frederico — tô com um probleminha pra ouvir agora. "
+                    "Pode me mandar em texto rapidinho o que você busca?"
+                )
+                await self.evo.send_text(phone, fail, delay_ms=3500)
+                return fail
+
+        if not user_text:
+            reply = "Não consegui entender bem — me conta em texto ou manda o áudio de novo?"
+            await self.evo.send_text(phone, reply, delay_ms=3500)
             return reply
 
         knowledge = load_knowledge()
@@ -57,8 +121,15 @@ class Orchestrator:
                     "content": f"O lead se apresenta no WhatsApp como: {push_name}. Use o primeiro nome com naturalidade.",
                 }
             )
+        if inbound_audio:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "O lead acabou de mandar um ÁUDIO (já transcrito). Responda de forma falada/natural.",
+                }
+            )
         messages.extend(history)
-        messages.append({"role": "user", "content": text})
+        messages.append({"role": "user", "content": user_text})
 
         raw = await self.llm.chat(messages)
         reply, course = self._split_checkout(raw)
@@ -71,9 +142,41 @@ class Orchestrator:
                 "É só abrir e confirmar o pagamento simulado. Qualquer dúvida, estou aqui."
             )
 
-        self.memory.append(phone, "user", text)
+        self.memory.append(phone, "user", user_text)
         self.memory.append(phone, "assistant", reply)
-        await self.evo.send_text(phone, reply)
+
+        delay = self._human_delay_ms(reply)
+        await self.evo.send_presence(phone, delay_ms=delay)
+
+        want_audio = self._should_reply_audio(
+            inbound_was_audio=inbound_audio, reply=reply, course=course
+        )
+        if want_audio:
+            try:
+                # TTS: versão falada sem o link longo (manda link em texto depois se houver)
+                spoken = re.sub(r"https?://\S+", "link que te enviei no chat", reply)
+                spoken = re.sub(r"\n{2,}", ". ", spoken).strip()
+                audio = await self.tts.synthesize(spoken[:900])
+                await self.evo.send_audio(phone, audio, delay_ms=1800)
+                if course or "http" in reply:
+                    # garante o link clicável em texto
+                    link_only = "\n".join(
+                        line for line in reply.splitlines() if "http" in line or "checkout" in line.lower()
+                    )
+                    if not link_only and course:
+                        link_only = reply
+                    if "http" in reply:
+                        await self.evo.send_text(
+                            phone,
+                            "Te mandei também o link por escrito pra ficar fácil de abrir:\n"
+                            + "\n".join(l for l in reply.splitlines() if l.startswith("http") or "http" in l),
+                            delay_ms=2200,
+                        )
+                return reply
+            except Exception:
+                logger.exception("falha TTS; caindo para texto")
+
+        await self.evo.send_text(phone, reply, delay_ms=delay)
         return reply
 
     @staticmethod

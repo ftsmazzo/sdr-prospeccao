@@ -13,7 +13,7 @@ from app.webhook_parse import parse_incoming
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("edu")
 
-app = FastAPI(title="Edu SDR", version="0.1.0")
+app = FastAPI(title="Edu SDR", version="0.2.0")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -30,19 +30,29 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
+        "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
     }
 
 
-async def _process_message(phone: str, text: str, push_name: str, has_audio: bool) -> None:
+async def _process_message(
+    phone: str,
+    text: str,
+    push_name: str,
+    has_audio: bool,
+    media_message: dict | None,
+) -> None:
     try:
         orch = _orchestrator()
-        content = text if text else ""
-        if has_audio and not text:
-            content = ""
-        await orch.handle_inbound(phone, content, push_name=push_name)
+        await orch.handle_inbound(
+            phone,
+            text,
+            push_name=push_name,
+            has_audio=has_audio,
+            media_message=media_message,
+        )
     except Exception:
         logger.exception("falha ao processar mensagem de %s", phone)
 
@@ -63,6 +73,7 @@ async def evolution_webhook(request: Request, background_tasks: BackgroundTasks)
         incoming["text"],
         incoming["push_name"],
         incoming["has_audio"],
+        incoming.get("media_message"),
     )
     return JSONResponse({"ok": True, "queued": True, "event": event})
 

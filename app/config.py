@@ -16,10 +16,19 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "openai/gpt-4.1-mini"
+    stt_model: str = "openai/whisper-1"
 
     evolution_base_url: str = ""
     evolution_api_key: str = ""
     evolution_instance: str = "poli"
+
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = ""
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+
+    # delay humanizado (ms) — typing + envio
+    reply_delay_min_ms: int = 3200
+    reply_delay_max_ms: int = 7000
 
     knowledge_path: str = "docs/CONHECIMENTO-AGENTE-FAVENI.md"
 

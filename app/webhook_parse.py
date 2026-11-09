@@ -12,7 +12,6 @@ def _extract_text(message: dict[str, Any]) -> str | None:
     image = message.get("imageMessage") or {}
     if image.get("caption"):
         return str(image["caption"]).strip()
-    # áudio: na fase 2 virá STT; por enquanto sinaliza
     if message.get("audioMessage"):
         return None
     return None
@@ -20,13 +19,7 @@ def _extract_text(message: dict[str, Any]) -> str | None:
 
 def parse_incoming(payload: dict[str, Any]) -> dict[str, Any] | None:
     """Normaliza webhook Evolution (MESSAGES_UPSERT) para um dict simples."""
-    event = (payload.get("event") or payload.get("type") or "").lower()
-    if event and "messages" not in event and "upsert" not in event:
-        # ainda assim tenta se houver data.message
-        pass
-
     data = payload.get("data") or payload
-    # alguns formatos enviam lista
     if isinstance(data, list):
         if not data:
             return None
@@ -41,7 +34,6 @@ def parse_incoming(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     message = data.get("message") or {}
-    # ignore reactions / protocol
     if "reactionMessage" in message or "protocolMessage" in message:
         return None
 
@@ -52,6 +44,11 @@ def parse_incoming(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     phone = remote.split("@")[0]
+    # objeto no formato esperado por getBase64FromMediaMessage
+    media_message = {
+        "key": key,
+        "message": message,
+    }
     return {
         "phone": phone,
         "remote_jid": remote,
@@ -59,4 +56,6 @@ def parse_incoming(payload: dict[str, Any]) -> dict[str, Any] | None:
         "text": text or "",
         "has_audio": has_audio,
         "message_id": key.get("id"),
+        "media_message": media_message if has_audio else None,
+        "raw_data": data,
     }
