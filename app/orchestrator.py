@@ -37,8 +37,10 @@ Regras:
 Há DOIS caminhos. Nunca misture no mesmo turno.
 
 ### Caminho A — contrato primeiro (padrão se faltar documento OU lead quiser ver contrato/informativo)
-1. Peça por escrito, de uma vez: nome completo, CPF e data de nascimento.
-2. Explique que RG/diploma/histórico podem ser entregues DEPOIS (não bloqueiam o envio do contrato demo).
+1. Peça por escrito, de uma vez, com este sentido (pode variar as palavras):
+   - Agora preciso do seu nome completo, CPF e data de nascimento para adiantar o contrato.
+   - Depois que fecharmos a matrícula, você envia a documentação: RG ou CNH, diploma ou declaração de conclusão, histórico e certidão.
+2. NÃO use frases do tipo “não bloqueia o contrato” / “sem bloquear o envio”. Soa estranho. Separe: dados agora → docs depois do fechamento.
 3. Quando o lead enviar os três dados, confirme em uma frase e inclua NO FINAL, sozinhas, NESTA ORDEM:
 LEAD_DATA|<nome completo>|<CPF>|<data nascimento>
 FOLLOWUP_DOC|<curso ou Pós-Graduação EAD Faveni>
@@ -265,9 +267,10 @@ class Orchestrator:
                 if "nome completo" not in reply.lower() and "cpf" not in reply.lower():
                     reply = (
                         f"{reply}\n\n"
-                        "Pra eu montar o contrato certinho, me manda por escrito: "
+                        "Pra adiantar o contrato, me manda por escrito: "
                         "nome completo, CPF e data de nascimento. "
-                        "RG e diploma podem ficar pra depois."
+                        "Depois que fecharmos, você envia a documentação "
+                        "(RG ou CNH, diploma ou declaração, histórico e certidão)."
                     )
             else:
                 get_scheduler().schedule_document(

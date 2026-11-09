@@ -187,8 +187,8 @@ class FollowUpScheduler:
                 (
                     f"Se estiver tudo certo no contrato, aqui está o link para confirmar "
                     f"a matrícula (demonstração):\n{link}\n\n"
-                    "Os documentos (RG, diploma etc.) podem ficar para depois — "
-                    "na confirmação a gente já deixa isso combinado."
+                    "Depois que confirmar, aí você envia a documentação "
+                    "(RG ou CNH, diploma ou declaração, histórico e certidão)."
                 ),
                 delay_ms=3200,
             )
