@@ -29,7 +29,7 @@ async def lifespan(_app: FastAPI):
         await task
 
 
-app = FastAPI(title="Edu SDR", version="0.3.2", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.4.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -46,7 +46,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.3.2",
+        "version": "0.4.0",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
@@ -55,14 +55,45 @@ def health():
     }
 
 
+def _admin_authorized(request: Request) -> bool:
+    settings = get_settings()
+    secret = request.headers.get("X-Admin-Secret") or request.query_params.get("secret") or ""
+    return bool(settings.webhook_secret and secret == settings.webhook_secret)
+
+
+@app.get("/admin/followups")
+async def list_followups(request: Request):
+    if not _admin_authorized(request):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    from app.followups import get_scheduler
+
+    jobs = get_scheduler().list_pending()
+    now = __import__("time").time()
+    return {
+        "ok": True,
+        "count": len(jobs),
+        "jobs": [
+            {
+                "id": j.get("id"),
+                "phone": j.get("phone"),
+                "course": j.get("course"),
+                "lead_name": j.get("lead_name"),
+                "has_cpf": bool(j.get("cpf")),
+                "seconds_left": max(0, int((j.get("run_at") or 0) - now)),
+                "with_checkout": j.get("with_checkout", True),
+            }
+            for j in jobs
+        ],
+    }
+
+
 @app.post("/admin/reset-memory")
 async def reset_memory(request: Request):
     """Limpa histórico Redis + follow-ups. Header: X-Admin-Secret = WEBHOOK_SECRET."""
-    settings = get_settings()
-    secret = request.headers.get("X-Admin-Secret") or request.query_params.get("secret") or ""
-    if not settings.webhook_secret or secret != settings.webhook_secret:
+    if not _admin_authorized(request):
         return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
 
+    settings = get_settings()
     body = {}
     try:
         body = await request.json()
@@ -75,17 +106,32 @@ async def reset_memory(request: Request):
     memory = ConversationMemory(settings)
     scheduler = get_scheduler()
     phone = (body.get("phone") or "").strip()
+    followups_only = bool(body.get("followups_only"))
 
     if phone:
         digits = phone.replace("+", "").replace(" ", "")
-        cleared = memory.clear(digits)
         followups = scheduler.clear_for_phone(digits)
+        if followups_only:
+            return {
+                "ok": True,
+                "scope": "phone_followups",
+                "phone": digits,
+                "followups_removed": followups,
+            }
+        cleared = memory.clear(digits)
         return {
             "ok": True,
             "scope": "phone",
             "phone": digits,
             "memory_cleared": cleared,
             "followups_removed": followups,
+        }
+
+    if followups_only:
+        return {
+            "ok": True,
+            "scope": "followups_all",
+            "followups_removed": scheduler.clear_all(),
         }
 
     return {
@@ -160,6 +206,10 @@ def checkout_page(token: str):
         <p>Olá, {nome}.</p>
         <p><strong>Curso:</strong> {session.course_label}</p>
         <p><strong>Mensalidade:</strong> {session.amount_label}</p>
+        <p style="color:#444;font-size:0.95rem">
+          Documentos complementares (RG/CNH, diploma ou declaração, histórico)
+          podem ser entregues <strong>depois</strong> desta confirmação.
+        </p>
         <form method="post" action="/checkout/{token}/confirm">
           <button type="submit" style="padding:0.9rem 1.4rem;font-size:1rem;cursor:pointer;
             background:#0b6e4f;color:#fff;border:0;border-radius:8px">

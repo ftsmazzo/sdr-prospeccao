@@ -3,22 +3,35 @@
 from __future__ import annotations
 
 
-def build_contrato_pdf(*, lead_name: str = "", course: str = "Pós-Graduação EAD Faveni") -> bytes:
+def build_contrato_pdf(
+    *,
+    lead_name: str = "",
+    cpf: str = "",
+    birth_date: str = "",
+    course: str = "Pós-Graduação EAD Faveni",
+) -> bytes:
     nome = lead_name.strip() or "Interessado(a)"
+    cpf_line = cpf.strip() or "a confirmar"
+    nasc = birth_date.strip() or "a confirmar"
     lines = [
         "FAVENI POLO CATANDUVA — DOCUMENTO DEMO",
         "Contrato / Informativo de Matricula (simulacao)",
         "",
-        f"Interessado: {nome}",
+        f"Nome completo: {nome}",
+        f"CPF: {cpf_line}",
+        f"Data de nascimento: {nasc}",
         f"Curso: {course}",
         "Modalidade: EAD",
         "Mensalidade referencia (demo): a partir de R$ 69,90",
         "",
+        "Documentos complementares (RG/CNH, diploma ou declaracao,",
+        "historico e certidao) podem ser entregues depois da confirmacao.",
+        "",
         "Este PDF e apenas demonstracao do agente Edu.",
         "Nao possui validade juridica e nao gera cobranca.",
-        "Apos o fechamento comercial, o polo envia o contrato oficial.",
         "",
-        "Proximo passo sugerido: confirmar interesse e seguir com a matricula.",
+        "Se os dados estiverem corretos, confirme a matricula pelo link",
+        "que o Edu enviara em seguida nesta conversa.",
     ]
     return _simple_pdf(lines)
 

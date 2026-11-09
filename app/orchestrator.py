@@ -20,21 +20,33 @@ Objetivo: conduzir o lead até aceitar a matrícula de pós EAD (ou 2ª licencia
 
 Regras:
 - Português brasileiro, tom caloroso e profissional, mensagens curtas (WhatsApp).
-- Faça UMA pergunta por vez.
+- Faça UMA pergunta por vez (exceto na coleta de dados de matrícula, abaixo).
 - Use SOMENTE a base de conhecimento abaixo. Não invente preço, bolsa, promoção ou telefone do polo.
 - Mensalidade âncora da demo: a partir de R$ 69,90.
 - Esta conversa JÁ É o atendimento; não redirecione para outro WhatsApp.
 - Se o lead sair do assunto, reconheça com empatia em uma frase e volte ao funil de matrícula.
 - Fluxo: qualificar → recomendar → tratar objeção → fechar.
-- Quando o lead aceitar matricular / quiser fechar / pedir pagamento, responda confirmando e inclua EXATAMENTE esta linha sozinha no final:
-CHECKOUT_READY|<curso escolhido ou Pós-Graduação EAD Faveni>
-- Não invente links. O sistema anexa o link de checkout depois.
-- Documentos / contrato: se o lead disser que ainda não tem documentos, ou pedir para ver o contrato/informativo antes de fechar, você PODE prometer enviar em alguns minutos — mas SÓ se incluir EXATAMENTE esta linha sozinha no final da resposta (o sistema agenda e envia o PDF depois):
+- Evite tom de locução/institucional. Empatia calorosa, concreta e humana.
+- Canal: o sistema decide texto ou áudio. Escreva a melhor mensagem; não mencione TTS.
+
+## Fechamento — jornada (obrigatório)
+
+Há DOIS caminhos. Nunca misture no mesmo turno.
+
+### Caminho A — contrato primeiro (padrão se faltar documento OU lead quiser ver contrato/informativo)
+1. Peça por escrito, de uma vez: nome completo, CPF e data de nascimento.
+2. Explique que RG/diploma/histórico podem ser entregues DEPOIS (não bloqueiam o envio do contrato demo).
+3. Quando o lead enviar os três dados, confirme em uma frase e inclua NO FINAL, sozinhas, NESTA ORDEM:
+LEAD_DATA|<nome completo>|<CPF>|<data nascimento>
 FOLLOWUP_DOC|<curso ou Pós-Graduação EAD Faveni>
-- Nessa promessa, diga que você prepara e envia em seguida (uns 15 minutos). NÃO diga “me chama se precisar” como despedida que abandona o lead — você volta com o documento.
-- NÃO prometa enviar contrato/documento/PDF se não emitir a linha FOLLOWUP_DOC. Sem o marcador, o envio não acontece.
-- Evite tom de locução/institucional (“é uma escolha muito importante…”). Empatia calorosa, concreta e humana.
-- Canal: o sistema decide se envia texto ou áudio. Escreva sempre a melhor mensagem de WhatsApp (calor + clareza). Não mencione que é áudio/TTS.
+4. Diga que você prepara o contrato/informativo (~15 min) e, se estiver ok, manda o link da matrícula em seguida.
+5. NÃO use CHECKOUT_READY neste caminho. O sistema envia o link DEPOIS do PDF.
+6. NÃO prometa contrato/PDF sem emitir FOLLOWUP_DOC + LEAD_DATA.
+
+### Caminho B — checkout direto
+Só se o lead já tiver dados coletados E aceitar fechar sem pedir contrato, E não houver promessa de documento pendente:
+CHECKOUT_READY|<curso>
+Não invente links — o sistema anexa.
 
 Base de conhecimento:
 {knowledge}
@@ -180,22 +192,65 @@ class Orchestrator:
         messages.append({"role": "user", "content": user_text})
 
         raw = await self.llm.chat(messages)
-        reply, course, followup_course = self._split_markers(raw)
-        if course:
-            session = create_checkout(phone, course_label=course, lead_name=push_name)
-            link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
-            reply = (
-                f"{reply}\n\n"
-                f"Perfeito — preparei sua matrícula (demonstração):\n{link}\n\n"
-                "É só abrir e confirmar o pagamento simulado. Qualquer dúvida, estou aqui."
+        reply, course, followup_course, lead_data = self._split_markers(raw)
+
+        meta = self.memory.get_meta(phone)
+        if lead_data:
+            meta.update(
+                {
+                    "full_name": lead_data["full_name"],
+                    "cpf": lead_data["cpf"],
+                    "birth_date": lead_data["birth_date"],
+                }
             )
+            self.memory.set_meta(phone, meta)
+            logger.info("LEAD_DATA salvo phone=%s", phone)
+
+        # Caminho contrato: nunca manda link no mesmo turno
         if followup_course:
-            get_scheduler().schedule_document(
-                phone=phone,
-                lead_name=push_name or "",
-                course=followup_course,
-            )
-            logger.info("FOLLOWUP_DOC agendado phone=%s course=%s", phone, followup_course)
+            ld = lead_data or {}
+            full_name = (meta.get("full_name") or ld.get("full_name") or "").strip()
+            cpf = (meta.get("cpf") or ld.get("cpf") or "").strip()
+            birth = (meta.get("birth_date") or ld.get("birth_date") or "").strip()
+            if not (full_name and cpf and birth):
+                # Sem dados: não agenda PDF vazio — pede dados na resposta
+                logger.warning("FOLLOWUP_DOC sem LEAD_DATA phone=%s — ignorado", phone)
+                if "nome completo" not in reply.lower() and "cpf" not in reply.lower():
+                    reply = (
+                        f"{reply}\n\n"
+                        "Pra eu montar o contrato certinho, me manda por escrito: "
+                        "nome completo, CPF e data de nascimento. "
+                        "RG e diploma podem ficar pra depois."
+                    )
+            else:
+                get_scheduler().schedule_document(
+                    phone=phone,
+                    lead_name=full_name,
+                    cpf=cpf,
+                    birth_date=birth,
+                    course=followup_course,
+                    with_checkout=True,
+                )
+                meta["pending_contract"] = True
+                meta["course"] = followup_course
+                self.memory.set_meta(phone, meta)
+                logger.info("FOLLOWUP_DOC agendado phone=%s course=%s", phone, followup_course)
+            course = None  # bloqueia checkout imediato
+
+        elif course:
+            # Se já tem contrato pendente, não manda link agora
+            if meta.get("pending_contract"):
+                logger.info("CHECKOUT_READY adiado — contrato pendente phone=%s", phone)
+                course = None
+            else:
+                name = meta.get("full_name") or push_name
+                session = create_checkout(phone, course_label=course, lead_name=name or "")
+                link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
+                reply = (
+                    f"{reply}\n\n"
+                    f"Perfeito — preparei sua matrícula (demonstração):\n{link}\n\n"
+                    "É só abrir e confirmar. Documentos complementares podem ser enviados depois."
+                )
 
         self.memory.append(phone, "user", user_text)
         self.memory.append(phone, "assistant", reply)
@@ -236,10 +291,24 @@ class Orchestrator:
         return reply
 
     @staticmethod
-    def _split_markers(raw: str) -> tuple[str, str | None, str | None]:
+    def _split_markers(
+        raw: str,
+    ) -> tuple[str, str | None, str | None, dict[str, str] | None]:
         text = raw.strip()
         course: str | None = None
         followup: str | None = None
+        lead_data: dict[str, str] | None = None
+
+        lead_match = re.search(r"LEAD_DATA\|(.+)$", text, flags=re.MULTILINE)
+        if lead_match:
+            parts = [p.strip() for p in lead_match.group(1).split("|")]
+            if len(parts) >= 3:
+                lead_data = {
+                    "full_name": parts[0],
+                    "cpf": parts[1],
+                    "birth_date": parts[2],
+                }
+            text = re.sub(r"\n?LEAD_DATA\|.+$", "", text, flags=re.MULTILINE).strip()
 
         checkout_match = re.search(r"CHECKOUT_READY\|(.+)$", text, flags=re.MULTILINE)
         if checkout_match:
@@ -251,4 +320,4 @@ class Orchestrator:
             followup = followup_match.group(1).strip() or "Pós-Graduação EAD Faveni"
             text = re.sub(r"\n?FOLLOWUP_DOC\|.+$", "", text, flags=re.MULTILINE).strip()
 
-        return text, course, followup
+        return text, course, followup, lead_data

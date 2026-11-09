@@ -1,4 +1,4 @@
-"""Agenda e dispara follow-ups prometidos (ex.: enviar contrato em 15 min)."""
+"""Agenda e dispara follow-ups: contrato com dados → depois link de checkout."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import time
 import uuid
 from typing import Any
 
+from app.checkout import create_checkout
 from app.clients.evolution import EvolutionClient
 from app.config import Settings, get_settings
 from app.documents import build_contrato_pdf
@@ -32,6 +33,17 @@ class FollowUpScheduler:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Redis indisponível para follow-ups: %s", exc)
                 self._redis = None
+
+    def list_pending(self) -> list[dict[str, Any]]:
+        jobs: list[dict[str, Any]] = []
+        if self._redis:
+            for raw in self._redis.zrange(REDIS_KEY, 0, -1):
+                try:
+                    jobs.append(json.loads(raw))
+                except json.JSONDecodeError:
+                    continue
+            return jobs
+        return list(self._local)
 
     def clear_for_phone(self, phone: str) -> int:
         """Remove follow-ups pendentes de um telefone."""
@@ -67,16 +79,27 @@ class FollowUpScheduler:
         *,
         phone: str,
         lead_name: str = "",
+        cpf: str = "",
+        birth_date: str = "",
         course: str = "Pós-Graduação EAD Faveni",
         delay_seconds: int | None = None,
+        with_checkout: bool = True,
     ) -> dict[str, Any]:
+        # Evita PDF duplicado se o modelo emitir FOLLOWUP_DOC duas vezes
+        removed = self.clear_for_phone(phone)
+        if removed:
+            logger.info("follow-ups anteriores removidos phone=%s n=%s", phone, removed)
+
         delay = delay_seconds if delay_seconds is not None else self.settings.followup_delay_seconds
         job = {
             "id": str(uuid.uuid4()),
             "type": "send_contrato",
             "phone": phone,
             "lead_name": lead_name,
+            "cpf": cpf,
+            "birth_date": birth_date,
             "course": course,
+            "with_checkout": with_checkout,
             "run_at": time.time() + max(30, delay),
             "created_at": time.time(),
         }
@@ -85,10 +108,11 @@ class FollowUpScheduler:
         else:
             self._local.append(job)
         logger.info(
-            "follow-up agendado id=%s phone=%s em %ss",
+            "follow-up agendado id=%s phone=%s em %ss checkout=%s",
             job["id"],
             phone,
             delay,
+            with_checkout,
         )
         return job
 
@@ -131,14 +155,21 @@ class FollowUpScheduler:
 
     async def _run_job(self, evo: EvolutionClient, job: dict[str, Any]) -> None:
         phone = job["phone"]
-        name = job.get("lead_name") or ""
+        name = (job.get("lead_name") or "").strip()
+        cpf = (job.get("cpf") or "").strip()
+        birth = (job.get("birth_date") or "").strip()
         course = job.get("course") or "Pós-Graduação EAD Faveni"
-        first = name.split()[0] if name.strip() else "oi"
+        first = name.split()[0] if name else "oi"
 
-        pdf = build_contrato_pdf(lead_name=name, course=course)
+        pdf = build_contrato_pdf(
+            lead_name=name,
+            cpf=cpf,
+            birth_date=birth,
+            course=course,
+        )
         caption = (
-            f"{first}, como combinei: segue o informativo/contrato demonstrativo da matrícula "
-            f"em {course}. É um documento de demonstração — qualquer ajuste a gente resolve por aqui."
+            f"{first}, como combinei: segue o informativo/contrato demonstrativo "
+            f"já com seus dados para {course}."
         )
         await evo.send_document(
             phone,
@@ -147,12 +178,38 @@ class FollowUpScheduler:
             caption=caption,
             delay_ms=2500,
         )
-        await evo.send_text(
-            phone,
-            "Quando você tiver os documentos em mãos, me avisa que eu te guio no próximo passo da matrícula "
-            "(na demo também posso te mandar o link de confirmação).",
-            delay_ms=2800,
-        )
+
+        if job.get("with_checkout", True):
+            session = create_checkout(phone, course_label=course, lead_name=name)
+            link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
+            await evo.send_text(
+                phone,
+                (
+                    f"Se estiver tudo certo no contrato, aqui está o link para confirmar "
+                    f"a matrícula (demonstração):\n{link}\n\n"
+                    "Os documentos (RG, diploma etc.) podem ficar para depois — "
+                    "na confirmação a gente já deixa isso combinado."
+                ),
+                delay_ms=3200,
+            )
+        else:
+            await evo.send_text(
+                phone,
+                "Quando estiver de acordo com o contrato, me avisa que eu te mando o link da matrícula.",
+                delay_ms=2800,
+            )
+        # Libera caminho de checkout futuro e marca contrato entregue
+        try:
+            from app.memory import ConversationMemory
+
+            mem = ConversationMemory(self.settings)
+            meta = mem.get_meta(phone)
+            meta["pending_contract"] = False
+            meta["contract_sent"] = True
+            mem.set_meta(phone, meta)
+        except Exception:  # noqa: BLE001
+            logger.warning("não atualizou meta pós-contrato phone=%s", phone)
+
         logger.info("follow-up enviado phone=%s job=%s", phone, job.get("id"))
 
 
