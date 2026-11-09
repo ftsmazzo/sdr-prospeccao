@@ -35,10 +35,12 @@ Dica Pro: **Instant Voice Clone** com 1–2 min de você falando natural em PT-B
 
 | Setting | Baixo | Alto | Demo Edu |
 |---|---|---|---|
-| **stability** | Mais emoção/variação | Mais monótono | **0.30–0.40** |
-| **similarity_boost** | Mais “solto” | Mais fiel à voz | **0.75–0.85** |
-| **style** | Neutro | Mais “caráter” | **0.25–0.40** |
-| **speed** | Mais lento | Mais rápido | **0.92–1.00** |
+| **stability** | Mais variação | Mais monótono | **0.35–0.45** |
+| **similarity_boost** | Mais “solto” | Mais fiel à voz | **~0.75** |
+| **style** | Neutro (recomendado) | “Vídeo de IA” / teatral | **0.0–0.15** |
+| **speed** | Cadência pausada | Mais natural no zap | **1.00–1.08** |
+
+> Style alto + texto empático teatral = fala esquisita. O Edu agora reescreve o áudio para 1–2 frases coloquiais antes do TTS.
 
 ## Texto também importa
 

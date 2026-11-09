@@ -10,6 +10,7 @@ from app.clients.stt import SpeechToTextClient
 from app.config import Settings
 from app.knowledge import load_knowledge
 from app.memory import ConversationMemory
+from app.speech import to_spoken_script
 
 logger = logging.getLogger("edu.orchestrator")
 
@@ -28,6 +29,7 @@ Regras:
 CHECKOUT_READY|<curso escolhido ou Pós-Graduação EAD Faveni>
 - Não invente links. O sistema anexa o link de checkout depois.
 - Se o lead mandou áudio, responda de forma natural (como em conversa falada), ainda com 1 pergunta por vez.
+- Evite tom de locução/institucional (“é uma escolha muito importante…”). Empatia curta e concreta.
 
 Base de conhecimento:
 {knowledge}
@@ -154,11 +156,11 @@ class Orchestrator:
         )
         if want_audio:
             try:
-                # TTS: versão falada sem o link longo (manda link em texto depois se houver)
-                spoken = re.sub(r"https?://\S+", "link que te enviei no chat", reply)
-                spoken = re.sub(r"\n{2,}", ". ", spoken).strip()
-                audio = await self.tts.synthesize(spoken[:900])
-                await self.evo.send_audio(phone, audio, delay_ms=1800)
+                # TTS usa roteiro FALADO (não o texto escrito do chat)
+                spoken = await to_spoken_script(self.llm, reply)
+                logger.info("tts spoken=%r", spoken[:160])
+                audio = await self.tts.synthesize(spoken)
+                await self.evo.send_audio(phone, audio, delay_ms=1600)
                 if course or "http" in reply:
                     # garante o link clicável em texto
                     link_only = "\n".join(
