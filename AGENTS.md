@@ -12,6 +12,7 @@ Fonte única de regras do projeto. `.cursor/rules` deve apontar para cá, sem du
 
 - Backend FastAPI; OpenRouter multi-modelo; Evolution; Redis; Postgres+pgvector; ElevenLabs; deploy EasyPanel **Fabrica-IA**.
 - Secrets só em env — nunca commitados.
+- Repo GitHub está **público** (exigência do deploy EasyPanel com o token atual). Não colocar credenciais, `.env` nem dumps no git.
 
 ## Qualidade / segurança
 
