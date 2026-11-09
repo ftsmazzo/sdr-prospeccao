@@ -18,7 +18,7 @@ Fatos que a consultora/consultor pode usar na conversa. Não inventar além diss
 | Pós-Graduação EAD | Especialização 100% online, flexível; nomes/carga/duração só do catálogo | Oferta principal |
 | 2ª Licenciatura / Complementação Pedagógica | Para quem já é formado e quer ampliar atuação na educação | Se o lead pedir |
 | Graduação | O polo tem opções de graduação; NÃO cite nomes de cursos, modalidade (EAD/presencial) nem duração — ofereça contato com especialista | Processo próprio |
-| Capacitação | Cursos curtos de atualização | Porta de entrada |
+| Capacitação | Cursos mais curtos para começar já; NÃO cite nomes, duração ou requisitos — especialista confirma | Porta de entrada |
 
 Áreas de pós (orientação): Educação, Saúde, Negócios/Administração/Direito, Tecnologia, Engenharia, Comunicação.
 
