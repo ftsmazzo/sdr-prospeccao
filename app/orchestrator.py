@@ -98,8 +98,9 @@ class Orchestrator:
                 logger.info("áudio transcrito phone=%s text=%r", phone, user_text[:120])
             except Exception:
                 logger.exception("falha STT")
+                nome = (push_name or "").split()[0] or "aí"
                 fail = (
-                    "Recebi seu áudio, Frederico — tô com um probleminha pra ouvir agora. "
+                    f"Recebi seu áudio, {nome} — tô com um probleminha pra ouvir agora. "
                     "Pode me mandar em texto rapidinho o que você busca?"
                 )
                 await self.evo.send_text(phone, fail, delay_ms=3500)
