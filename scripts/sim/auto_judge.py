@@ -36,6 +36,44 @@ _NEXT_STEP_HINTS = (
     "vamos",
 )
 
+# Despedida / pedido de espaço do lead (fiscal + harness).
+_FAREWELL_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bat[eé]\s+mais\b", re.IGNORECASE),
+    re.compile(r"\bat[eé]\s+logo\b", re.IGNORECASE),
+    re.compile(r"\btchau\b", re.IGNORECASE),
+    re.compile(r"\bfalamos\s+depois\b", re.IGNORECASE),
+    re.compile(r"\b(vou|preciso|prefiro|quero)\s+pensar\b", re.IGNORECASE),
+    re.compile(r"\bpensar\s+(um\s+pouco|mais|com\s+calma|direitinho|melhor)\b", re.IGNORECASE),
+    re.compile(r"\bentro\s+em\s+contato\b", re.IGNORECASE),
+    re.compile(r"\bte\s+aviso\b", re.IGNORECASE),
+    re.compile(r"\bte\s+falo\b", re.IGNORECASE),
+    re.compile(r"\bte\s+dou\s+um\s+retorno\b", re.IGNORECASE),
+    re.compile(r"\bdou\s+um\s+retorno\b", re.IGNORECASE),
+    re.compile(r"\bdepois\s+(te\s+)?(falo|aviso|retorno)\b", re.IGNORECASE),
+    re.compile(r"\b(vou|quero)\s+(avaliar|analisar)\b", re.IGNORECASE),
+    re.compile(r"\bpor\s+enquanto\s+(é|e)\s+s[oó]\b", re.IGNORECASE),
+    re.compile(
+        r"\bpor\s+enquanto[,.]?\s+(n[aã]o(\s+preciso)?|s[oó]\s+(isso|tirar)|"
+        r"prefiro\s+pensar|vou\s+pensar)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bqualquer\s+coisa[,.]?\s+(eu\s+)?(entro|pe[cç]o|aviso)\b", re.IGNORECASE),
+    re.compile(r"\bse\s+eu\s+(decidir|precisar)\b", re.IGNORECASE),
+    re.compile(r"\b(depois|mais\s+tarde)\s+(eu\s+)?(te\s+)?aviso\b", re.IGNORECASE),
+    re.compile(r"\bn[aã]o\s+precisa\b", re.IGNORECASE),
+    re.compile(r"\bvou\s+aguardar\b", re.IGNORECASE),
+    re.compile(r"\b(deixa|deixar)\s+pra\s+(l[aá]|depois)\b", re.IGNORECASE),
+    re.compile(r"\bquando\s+decidir\b", re.IGNORECASE),
+)
+
+
+def looks_like_farewell(text: str) -> bool:
+    """True se o lead parece se despedir ou pedir espaço."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    return any(rx.search(raw) for rx in _FAREWELL_RES)
+
 
 def load_catalog(path: Path | None = None) -> list[tuple[str, int]]:
     root = Path(__file__).resolve().parents[2]
@@ -112,6 +150,7 @@ def judge_agent_reply(
     aceite_matricula: bool,
     action_executed: bool,
     catalog: list[tuple[str, int]] | None = None,
+    lead_text: str = "",
 ) -> list[dict[str, Any]]:
     catalog = catalog or load_catalog()
     text = (reply or "").strip()
@@ -136,7 +175,8 @@ def judge_agent_reply(
 
     low = text.casefold()
     has_next = any(h in low for h in _NEXT_STEP_HINTS) or "http" in low
-    if q_count == 0 and not has_next:
+    lead_farewell = looks_like_farewell(lead_text)
+    if q_count == 0 and not has_next and not lead_farewell:
         add("sem_pergunta_nem_proximo_passo", text[:120])
 
     if asks_or_confirms_personal_data(text) and not aceite_matricula:

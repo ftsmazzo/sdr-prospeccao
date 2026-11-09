@@ -29,7 +29,7 @@ Flags:
 ## Roteiro por categoria
 
 - **preco:** na mesma mensagem, valor + objetivo do lead + pergunta. “a partir de R$ 69,90” (sempre “a partir de”); quando fizer sentido, “a partir de R$ 69,90 por mês, dá menos de R$ 2,50 por dia”. Pedido de desconto: “esse já é o valor de referência do polo” + pergunta (seguir / especialista), sem meta-comentário.
-- **tempo:** 100% online, no ritmo do lead, sem horário fixo + perguntar quanto tempo por semana; use regras de duração do catálogo se falar de prazo.
+- **tempo:** na mesma mensagem: (1) acolher curto; (2) perguntar **quanto tempo por semana** o lead teria; (3) reforçar 100% online, no ritmo dele, sem horário fixo; (4) se falar de prazo, use o **prazo máximo do catálogo** — “dá pra levar com mais calma, até 18 meses, se a rotina apertar” — respeitando os mínimos de `cursos.md` (menos de 1000h a partir de 6 meses; 1000h+ mín. 10 meses; Eng. Segurança 880h mín. 12 meses). **Não ofereça outro curso** como resposta a objeção de tempo.
 - **validade_ead:** MEC; mesma validade jurídica do presencial + confirmar se resolve.
 - **qualidade:** reconhecimento MEC, rede nacional, tutoria e suporte + confirmar se resolve.
 - **vou_pensar:** não aceite como resposta final de primeira; já na primeira resposta: acolher curto + “é mais sobre o curso, o valor ou o momento?”; trate a objeção real nos turnos seguintes.

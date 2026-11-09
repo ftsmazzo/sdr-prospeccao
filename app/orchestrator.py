@@ -18,7 +18,8 @@ from app.lead_state import (
     can_run_action,
     ensure_lead_state,
     merge_state_update,
-    reply_looks_like_promise,
+    reply_looks_like_callback_promise,
+    reply_looks_like_delivery_promise,
     rewrite_blocked_action_reply,
     summarize_lead,
 )
@@ -74,6 +75,13 @@ _REGEN_MOTIVOS = {
         "se ele pediu informações ou um resumo, escreva o resumo NESTA mensagem "
         "(curso, carga horária do catálogo, a partir de R$ 69,90, 100% online, "
         "troca de curso em 90 dias, documentos necessários)."
+    ),
+    "promessa_lembrete": (
+        "Você NÃO pode prometer lembrete, retorno, 'te chamo em alguns dias' "
+        "nem 'te aviso se surgir algo' — ainda não existe follow-up automático. "
+        "Se o lead pediu espaço ou se despediu, diga algo como: "
+        "'Quando quiser retomar, é só me chamar aqui.' Sem pergunta nova se for despedida. "
+        "Não ofereça outro curso nem empurre matrícula."
     ),
     "dados_antes_fechamento": (
         "Você NÃO pode pedir nome completo, CPF ou data de nascimento agora — "
@@ -281,13 +289,12 @@ class Orchestrator:
         last_assistant: str,
     ) -> str | None:
         if blocked_promise_reason:
-            return "promessa_sem_acao"
-        if (
-            not delivery_ran
-            and not meta.get("pending_contract")
-            and reply_looks_like_promise(reply)
-        ):
-            return "promessa_sem_acao"
+            return blocked_promise_reason
+        if not delivery_ran and not meta.get("pending_contract"):
+            if reply_looks_like_callback_promise(reply):
+                return "promessa_lembrete"
+            if reply_looks_like_delivery_promise(reply):
+                return "promessa_sem_acao"
         etapa = meta.get("etapa") or ""
         if etapa != "fechamento" and asks_or_confirms_personal_data(reply):
             return "dados_antes_fechamento"
@@ -331,11 +338,13 @@ class Orchestrator:
     def _apply_stock_fallback(self, meta: dict, reason: str, reply: str) -> str:
         ls = meta.get("lead_state") or {}
         stock_reason = reason
-        if reason == "promessa_sem_acao":
-            if not ls.get("curso_escolhido"):
-                stock_reason = "sem_curso"
-            elif not ls.get("aceite_matricula"):
-                stock_reason = "sem_aceite"
+        # Lembrete/retorno: stock dedicado (nunca sem_curso/sem_aceite).
+        if reason == "promessa_lembrete" or (
+            reason == "promessa_sem_acao" and reply_looks_like_callback_promise(reply)
+        ):
+            stock_reason = "promessa_lembrete"
+        # promessa_sem_acao pura: stock informativo (não forçar aceite).
+        # Motivos "FOLLOWUP_DOC sem_aceite" / "sem_curso" já vêm no reason e seguem.
         avoid = str(meta.get("last_stock_reply") or "")
         stock = rewrite_blocked_action_reply(stock_reason, reply, ls, avoid=avoid)
         meta["last_stock_reply"] = stock
@@ -356,7 +365,9 @@ class Orchestrator:
         blocked_promise_reason: str | None = None
         if action and not ok:
             logger.info("action ignorada phone=%s reason=%s", phone, reason)
-            if action in ("FOLLOWUP_DOC", "CHECKOUT_READY") and reply_looks_like_promise(reply):
+            if action in ("FOLLOWUP_DOC", "CHECKOUT_READY") and reply_looks_like_delivery_promise(
+                reply
+            ):
                 blocked_promise_reason = reason or "promessa_sem_acao"
             action = None
 
@@ -425,10 +436,12 @@ class Orchestrator:
         if (
             not delivery_ran
             and not meta.get("pending_contract")
-            and reply_looks_like_promise(reply)
             and not blocked_promise_reason
         ):
-            blocked_promise_reason = "promessa_sem_acao"
+            if reply_looks_like_callback_promise(reply):
+                blocked_promise_reason = "promessa_lembrete"
+            elif reply_looks_like_delivery_promise(reply):
+                blocked_promise_reason = "promessa_sem_acao"
 
         # delivery_ran anula bloqueio de promessa (já entregou)
         if delivery_ran:
@@ -459,15 +472,16 @@ class Orchestrator:
             logger.info("regen reply reason=%s", reason)
             regenerated = await self._regenerate_reply(messages, meta, reason)
             if regenerated:
+                still_blocked = None
+                if reply_looks_like_callback_promise(regenerated):
+                    still_blocked = "promessa_lembrete"
+                elif reply_looks_like_delivery_promise(regenerated):
+                    still_blocked = "promessa_sem_acao"
                 still = self._reply_needs_regen(
                     regenerated,
                     meta,
                     delivery_ran=False,
-                    blocked_promise_reason=(
-                        "promessa_sem_acao"
-                        if reply_looks_like_promise(regenerated)
-                        else None
-                    ),
+                    blocked_promise_reason=still_blocked,
                     last_assistant=last_assistant,
                 )
                 if not still:

@@ -8,7 +8,7 @@ from typing import Any
 from app.config import Settings, get_settings
 from app.orchestrator import Orchestrator
 
-from scripts.sim.auto_judge import judge_agent_reply, load_catalog
+from scripts.sim.auto_judge import judge_agent_reply, load_catalog, looks_like_farewell
 from scripts.sim.lead import LEAD_TEMPERATURE, generate_lead_message
 from scripts.sim.llm_judge import JUDGE_TEMPERATURE, judge_conversation
 from scripts.sim.mocks import MockEvolution, MockScheduler
@@ -94,6 +94,7 @@ async def run_persona(
     violations: list[dict[str, Any]] = []
     outcome = "max_turnos"
     jobs_mark = 0
+    farewell_streak = 0
 
     # limpa memória residual do phone
     orch.memory.clear(phone)
@@ -119,6 +120,11 @@ async def run_persona(
             lead_display = lead_raw
 
         history.append({"role": "lead", "turno": turn, "text": lead_display})
+
+        if looks_like_farewell(lead_text):
+            farewell_streak += 1
+        else:
+            farewell_streak = 0
 
         meta_before = orch.memory.get_meta(phone)
         ls_before = meta_before.get("lead_state") or {}
@@ -147,10 +153,14 @@ async def run_persona(
             aceite_matricula=aceite_before,
             action_executed=action_executed,
             catalog=catalog,
+            lead_text=lead_text,
         )
         violations.extend(turn_violations)
 
         meta = orch.memory.get_meta(phone)
+        if farewell_streak >= 2:
+            outcome = "lead_encerrou"
+            break
         stop = _outcome_from_state(
             scheduled=bool(new_jobs),
             reply=agent_text,

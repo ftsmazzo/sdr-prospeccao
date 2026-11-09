@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from scripts.sim.auto_judge import judge_agent_reply, load_catalog
+from scripts.sim.auto_judge import judge_agent_reply, load_catalog, looks_like_farewell
 
 
 def test_catalog_loads():
@@ -27,6 +27,30 @@ def test_sem_pergunta():
     reply = "Tranquilo, faz sentido."
     v = judge_agent_reply(reply, turno=2, aceite_matricula=False, action_executed=False)
     assert any(x["regra"] == "sem_pergunta_nem_proximo_passo" for x in v)
+
+
+def test_despedida_sem_pergunta_ok():
+    reply = "Quando quiser retomar, é só me chamar aqui."
+    lead = "Por enquanto é só, obrigada. Vou pensar e te aviso. Até mais!"
+    assert looks_like_farewell(lead)
+    v = judge_agent_reply(
+        reply,
+        turno=8,
+        aceite_matricula=False,
+        action_executed=False,
+        lead_text=lead,
+    )
+    assert not any(x["regra"] == "sem_pergunta_nem_proximo_passo" for x in v)
+    assert not looks_like_farewell(
+        "Por enquanto vou focar na pós em Enfermagem em Estética mesmo."
+    )
+    assert looks_like_farewell("Quero pensar mais um pouco. Depois te falo, tá?")
+
+
+def test_promessa_lembrete_fiscal():
+    reply = "Vou te chamar em alguns dias para acompanhar sua decisão."
+    v = judge_agent_reply(reply, turno=9, aceite_matricula=False, action_executed=False)
+    assert any(x["regra"] == "promessa_sem_acao" for x in v)
 
 
 def test_preco_errado():

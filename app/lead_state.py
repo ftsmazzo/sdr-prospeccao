@@ -108,6 +108,52 @@ _PROMISE_DELIVERY_RES: tuple[re.Pattern[str], ...] = (
     ),
 )
 
+# Lembrete / retorno futuro — ainda sem follow-up automático (Fase 4).
+_PROMISE_CALLBACK_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:vou|posso)\s+(?:te\s+)?chamar\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bte\s+chamo\s+(?:daqui|em|depois|logo)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:vou|posso)\s+(?:te\s+)?(?:enviar|mandar)\s+(?:um\s+)?lembrete\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\blembrete\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:vou|posso)\s+(?:te\s+)?avisar\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bte\s+aviso\s+se\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:vou\s+)?lembrar\s+de\s+te\s+(?:chamar|enviar|avisar)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bacompanhar\s+(?:sua|a)\s+decis(?:ao|ão)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bvoltar\s+a\s+(?:te\s+)?chamar\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:daqui|em)\s+(?:a\s+)?(?:alguns|uns)\s+dias\b"
+        r".{0,40}?"
+        r"\b(?:chamar|lembrete|avisar|acompanhar)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+)
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -551,10 +597,23 @@ def _fold_accents(text: str) -> str:
     return "".join(ch for ch in norm if unicodedata.category(ch) != "Mn")
 
 
-def reply_looks_like_promise(reply: str) -> bool:
-    """True só se a agente promete ENTREGAR contrato/PDF/link (não só mencionar o assunto)."""
+def reply_looks_like_delivery_promise(reply: str) -> bool:
+    """True se promete ENTREGAR contrato/PDF/link (não só mencionar o assunto)."""
     folded = _fold_accents(reply or "")
     return any(rx.search(folded) for rx in _PROMISE_DELIVERY_RES)
+
+
+def reply_looks_like_callback_promise(reply: str) -> bool:
+    """True se promete lembrete, retorno ou 'te chamo depois' (sem follow-up automático)."""
+    folded = _fold_accents(reply or "")
+    return any(rx.search(folded) for rx in _PROMISE_CALLBACK_RES)
+
+
+def reply_looks_like_promise(reply: str) -> bool:
+    """True se promete entrega de documento/link OU lembrete/retorno futuro."""
+    return reply_looks_like_delivery_promise(reply) or reply_looks_like_callback_promise(
+        reply
+    )
 
 
 def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
@@ -582,14 +641,22 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
             ),
         ]
 
+    if reason == "promessa_lembrete":
+        return [
+            "Quando quiser retomar, é só me chamar aqui.",
+            "Combinado. Quando quiser retomar, é só me chamar por aqui.",
+            "Sem problema — quando quiser retomar, é só me chamar aqui.",
+        ]
+
     curso = ls.get("curso_escolhido") or "esse curso"
-    if not ls.get("curso_escolhido") or "sem_curso" in reason:
+    # Action bloqueada por falta de curso/aceite (tokens no reason) — antes do genérico.
+    if "sem_curso" in reason:
         return [
             "Antes de eu preparar o contrato, me confirma qual curso você quer seguir?",
             "Qual especialização você quer seguir? Assim eu te passo as informações certas.",
             "Me confirma o nome do curso que você escolheu pra eu te orientar no próximo passo?",
         ]
-    if not ls.get("aceite_matricula") or "sem_aceite" in reason:
+    if "sem_aceite" in reason:
         return [
             (
                 f"Perfeito — só pra eu seguir certo: você confirma que quer matricular "
@@ -601,39 +668,45 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
             ),
             (
                 f"Sobre {curso}: é 100% online, a partir de R$ 69,90, com troca de curso "
-                "sem custo em 90 dias. Quer que eu detalhe carga horária e documentos, "
-                "ou prefere seguir com a matrícula?"
+                "sem custo em 90 dias. Quer que eu detalhe o passo a passo da matrícula "
+                "sem compromisso, ou prefere seguir com a matrícula?"
             ),
         ]
+
+    # Motivos de regeneração / action fora da etapa: responder inline, sem empurrar aceite.
     if reason in (
         "promessa_sem_acao",
         "dados_antes_fechamento",
         "escassez",
         "quase_igual",
-    ) or "bloqueada etapa" in reason or "etapa=" in reason:
+    ) or "bloqueada etapa" in reason:
+        curso_lbl = ls.get("curso_escolhido") or "o curso"
         return [
             (
-                "Quando estiver pronto, me manda por escrito nome completo, CPF e "
-                "data de nascimento que eu preparo o contrato."
+                f"Sobre {curso_lbl}: é 100% online, a partir de R$ 69,90, com troca "
+                "sem custo em 90 dias. O passo a passo é confirmar o curso, "
+                "na hora de fechar você envia os dados pessoais e depois recebe "
+                "o informativo. O que você quer esclarecer agora?"
             ),
             (
-                "Posso te passar o resumo agora: curso escolhido, mensalidade a partir "
-                "de R$ 69,90, 100% online e documentos depois da confirmação. "
-                "O que você ainda quer esclarecer?"
+                "Posso te passar o resumo agora: mensalidade a partir de R$ 69,90, "
+                "100% online e documentos só depois da confirmação. "
+                "O que você ainda quer saber?"
             ),
             (
-                "Sem prometer envio por agora: me diz o que você quer saber "
-                "(valor, prazo, documentos ou como funciona o EAD) que eu respondo aqui."
+                "Sem prometer envio por agora: me diz se quer valor, prazo, "
+                "documentos ou como funciona o EAD que eu respondo aqui."
             ),
+            "Quando quiser retomar, é só me chamar aqui.",
         ]
     return [
         (
-            "Ainda preciso de uma confirmação sua antes de seguir com documentos. "
-            "Me diz qual curso você quer e se podemos seguir com a matrícula."
-        ),
-        (
             "Me conta o que ainda falta pra você se sentir seguro — curso, valor "
             "ou como funciona o estudo — que eu te respondo direto."
+        ),
+        (
+            "Posso resumir valor, prazo e documentos aqui mesmo. "
+            "O que você quer esclarecer primeiro?"
         ),
     ]
 

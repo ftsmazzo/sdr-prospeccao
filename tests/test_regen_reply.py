@@ -100,6 +100,16 @@ def test_reply_needs_regen_promessa_e_cpf():
     )
     assert (
         orch._reply_needs_regen(
+            "Vou te chamar em alguns dias para acompanhar sua decisão",
+            meta,
+            delivery_ran=False,
+            blocked_promise_reason=None,
+            last_assistant="",
+        )
+        == "promessa_lembrete"
+    )
+    assert (
+        orch._reply_needs_regen(
             "Me manda nome completo, CPF e data de nascimento?",
             meta,
             delivery_ran=False,

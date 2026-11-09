@@ -7,6 +7,7 @@ from app.lead_state import (
     can_run_action,
     ensure_lead_state,
     merge_state_update,
+    reply_looks_like_callback_promise,
     reply_looks_like_promise,
     rewrite_blocked_action_reply,
 )
@@ -132,7 +133,7 @@ def test_objecao_resolvida_volta_recomendacao():
 
 def test_action_bloqueada_e_promessa_sem_acao():
     meta = {
-        "etapa": "recomendacao",
+        "etapa": "fechamento",
         "lead_state": {
             "curso_escolhido": None,
             "aceite_matricula": False,
@@ -143,6 +144,7 @@ def test_action_bloqueada_e_promessa_sem_acao():
     }
     ok, reason = can_run_action(meta, "FOLLOWUP_DOC")
     assert not ok
+    assert "sem_curso" in reason
     promised = "Vou preparar seu contrato agora e te mando o PDF."
     assert reply_looks_like_promise(promised)
     rewritten = rewrite_blocked_action_reply(reason, promised, meta["lead_state"])
@@ -150,9 +152,12 @@ def test_action_bloqueada_e_promessa_sem_acao():
     assert "http" not in rewritten.lower()
     assert "confirma qual curso" in rewritten.lower()
 
-    # promessa sem action
+    # promessa sem action → stock informativo (não força aceite)
     r2 = rewrite_blocked_action_reply("promessa_sem_acao", promised, meta["lead_state"])
-    assert "confirma qual curso" in r2.lower()
+    low2 = r2.lower()
+    assert "confirma que quer matricular" not in low2
+    assert "http" not in low2
+    assert any(x in low2 for x in ("esclarecer", "quer saber", "respondo aqui", "me chamar"))
 
 
 def test_promessa_somente_entrega_nao_mencao():
@@ -173,9 +178,21 @@ def test_promessa_somente_entrega_nao_mencao():
         "Em alguns minutos te envio o PDF",
         "Segue o link da matrícula demonstração",
         "Aqui está o contrato para você olhar",
+        "Vou te chamar em alguns dias",
+        "Vou lembrar de te chamar para acompanhar sua decisão",
+        "Te aviso se surgir algo diferente",
+        "Vou te enviar um lembrete",
     ]
     for msg in sim:
         assert reply_looks_like_promise(msg), msg
+
+    assert reply_looks_like_callback_promise("Vou te chamar daqui a alguns dias")
+    assert not reply_looks_like_callback_promise("Quer seguir com a matrícula?")
+    assert "me chamar aqui" in rewrite_blocked_action_reply(
+        "promessa_lembrete",
+        "Vou te chamar depois",
+        {"curso_escolhido": "Enfermagem em Estética", "aceite_matricula": False},
+    ).lower()
 
 
 def test_prompt_builder_inclui_schema():
