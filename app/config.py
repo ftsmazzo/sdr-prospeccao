@@ -32,7 +32,13 @@ class Settings(BaseSettings):
     elevenlabs_style: float = 0.1
     elevenlabs_speed: float = 1.05
 
-    # delay humanizado (ms) — typing + envio
+    # tempo "sem ação" antes de marcar como lida (ms)
+    human_idle_min_ms: int = 10000
+    human_idle_max_ms: int = 15000
+    # quanto tempo mostra digitando / gravando antes de enviar
+    typing_min_ms: int = 2500
+    typing_max_ms: int = 6000
+    # legado (não usado no timing novo; mantido por compat de env)
     reply_delay_min_ms: int = 3200
     reply_delay_max_ms: int = 7000
 

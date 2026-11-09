@@ -29,7 +29,7 @@ async def lifespan(_app: FastAPI):
         await task
 
 
-app = FastAPI(title="Edu SDR", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.4.1", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -46,7 +46,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.4.0",
+        "version": "0.4.1",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
@@ -148,6 +148,8 @@ async def _process_message(
     push_name: str,
     has_audio: bool,
     media_message: dict | None,
+    message_id: str,
+    remote_jid: str,
 ) -> None:
     try:
         orch = _orchestrator()
@@ -157,6 +159,8 @@ async def _process_message(
             push_name=push_name,
             has_audio=has_audio,
             media_message=media_message,
+            message_id=message_id,
+            remote_jid=remote_jid,
         )
     except Exception:
         logger.exception("falha ao processar mensagem de %s", phone)
@@ -179,6 +183,8 @@ async def evolution_webhook(request: Request, background_tasks: BackgroundTasks)
         incoming["push_name"],
         incoming["has_audio"],
         incoming.get("media_message"),
+        incoming.get("message_id") or "",
+        incoming.get("remote_jid") or "",
     )
     return JSONResponse({"ok": True, "queued": True, "event": event})
 

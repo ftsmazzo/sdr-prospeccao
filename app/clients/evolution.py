@@ -1,12 +1,14 @@
 import base64
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
 from app.config import Settings
 
 logger = logging.getLogger("edu.evolution")
+
+Presence = Literal["composing", "recording", "paused", "available"]
 
 
 class EvolutionClient:
@@ -22,25 +24,62 @@ class EvolutionClient:
     def _number(phone: str) -> str:
         return phone.split("@")[0].replace("+", "")
 
-    async def send_presence(self, phone: str, delay_ms: int = 4000) -> None:
-        """Mostra 'digitando...' no WhatsApp."""
+    @staticmethod
+    def _remote_jid(phone_or_jid: str) -> str:
+        raw = phone_or_jid.strip()
+        if "@" in raw:
+            return raw
+        return f"{EvolutionClient._number(raw)}@s.whatsapp.net"
+
+    async def mark_as_read(
+        self,
+        *,
+        remote_jid: str,
+        message_id: str,
+        from_me: bool = False,
+    ) -> None:
+        if not message_id:
+            return
+        url = f"{self.base}/chat/markMessageAsRead/{self.instance}"
+        payload = {
+            "readMessages": [
+                {
+                    "remoteJid": self._remote_jid(remote_jid),
+                    "fromMe": from_me,
+                    "id": message_id,
+                }
+            ]
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, headers=self._headers(), json=payload)
+            if resp.status_code >= 400:
+                logger.warning("markMessageAsRead failed %s %s", resp.status_code, resp.text[:300])
+
+    async def send_presence(
+        self,
+        phone: str,
+        delay_ms: int = 4000,
+        *,
+        presence: Presence = "composing",
+    ) -> None:
+        """Mostra digitando / gravando áudio no WhatsApp."""
         url = f"{self.base}/chat/sendPresence/{self.instance}"
         payload = {
             "number": self._number(phone),
-            "presence": "composing",
-            "delay": delay_ms,
+            "presence": presence,
+            "delay": max(500, delay_ms),
         }
         async with httpx.AsyncClient(timeout=45.0) as client:
             resp = await client.post(url, headers=self._headers(), json=payload)
             if resp.status_code >= 400:
                 logger.warning("sendPresence failed %s %s", resp.status_code, resp.text[:300])
 
-    async def send_text(self, phone: str, text: str, delay_ms: int = 3500) -> dict:
+    async def send_text(self, phone: str, text: str, delay_ms: int = 0) -> dict:
         url = f"{self.base}/message/sendText/{self.instance}"
         payload = {
             "number": self._number(phone),
             "text": text,
-            "delay": delay_ms,
+            "delay": max(0, delay_ms),
             "linkPreview": False,
         }
         async with httpx.AsyncClient(timeout=45.0) as client:
@@ -50,14 +89,14 @@ class EvolutionClient:
                 resp.raise_for_status()
             return resp.json()
 
-    async def send_audio(self, phone: str, audio_bytes: bytes, delay_ms: int = 2500) -> dict:
+    async def send_audio(self, phone: str, audio_bytes: bytes, delay_ms: int = 0) -> dict:
         """Envia áudio (mp3/ogg) como mensagem de voz."""
         url = f"{self.base}/message/sendWhatsAppAudio/{self.instance}"
         b64 = base64.b64encode(audio_bytes).decode("ascii")
         payload = {
             "number": self._number(phone),
             "audio": b64,
-            "delay": delay_ms,
+            "delay": max(0, delay_ms),
             "encoding": True,
         }
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -75,7 +114,7 @@ class EvolutionClient:
         filename: str,
         caption: str = "",
         mimetype: str = "application/pdf",
-        delay_ms: int = 2500,
+        delay_ms: int = 0,
     ) -> dict:
         """Envia documento (PDF) via sendMedia."""
         url = f"{self.base}/message/sendMedia/{self.instance}"
@@ -87,7 +126,7 @@ class EvolutionClient:
             "caption": caption,
             "media": b64,
             "fileName": filename,
-            "delay": delay_ms,
+            "delay": max(0, delay_ms),
         }
         async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(url, headers=self._headers(), json=payload)

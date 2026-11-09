@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import random
 import re
+import time
 
 from app.checkout import create_checkout
 from app.clients.elevenlabs import ElevenLabsClient
@@ -11,6 +13,7 @@ from app.config import Settings
 from app.followups import get_scheduler
 from app.knowledge import load_knowledge
 from app.memory import ConversationMemory
+from app.messaging import split_whatsapp_messages
 from app.speech import to_spoken_script
 
 logger = logging.getLogger("edu.orchestrator")
@@ -81,12 +84,39 @@ class Orchestrator:
         self.tts = ElevenLabsClient(settings)
         self.memory = ConversationMemory(settings)
 
-    def _human_delay_ms(self, text: str) -> int:
-        # ~35–45ms por caractere, com piso/teto humanizados
-        approx = 2800 + int(len(text) * 40)
-        lo = self.settings.reply_delay_min_ms
-        hi = self.settings.reply_delay_max_ms
-        return max(lo, min(hi, approx + random.randint(-400, 600)))
+    def _idle_ms(self) -> int:
+        lo = self.settings.human_idle_min_ms
+        hi = self.settings.human_idle_max_ms
+        return random.randint(lo, hi)
+
+    def _typing_ms(self, text: str) -> int:
+        approx = 1800 + int(len(text) * 35)
+        lo = self.settings.typing_min_ms
+        hi = self.settings.typing_max_ms
+        return max(lo, min(hi, approx + random.randint(-300, 400)))
+
+    async def _human_preamble(
+        self,
+        phone: str,
+        *,
+        remote_jid: str,
+        message_id: str,
+        started_at: float,
+        presence: str = "composing",
+        activity_ms: int = 3000,
+    ) -> None:
+        """Silêncio → lido → digitando/gravando (sem flicker)."""
+        target_idle = self._idle_ms() / 1000.0
+        elapsed = time.monotonic() - started_at
+        remaining = target_idle - elapsed
+        if remaining > 0.2:
+            await asyncio.sleep(remaining)
+
+        if message_id:
+            await self.evo.mark_as_read(remote_jid=remote_jid or phone, message_id=message_id)
+
+        await asyncio.sleep(random.uniform(0.4, 0.9))
+        await self.evo.send_presence(phone, delay_ms=activity_ms, presence=presence)  # type: ignore[arg-type]
 
     def _should_reply_audio(
         self,
@@ -140,12 +170,13 @@ class Orchestrator:
         push_name: str = "",
         has_audio: bool = False,
         media_message: dict | None = None,
+        message_id: str = "",
+        remote_jid: str = "",
     ) -> str:
         inbound_audio = bool(has_audio)
         user_text = (text or "").strip()
-
-        # Digitando cedo, enquanto processamos STT/LLM
-        await self.evo.send_presence(phone, delay_ms=5000)
+        started_at = time.monotonic()
+        # Sem presença enquanto processa — o “digitando” só depois do lido
 
         if inbound_audio and not user_text and media_message:
             try:
@@ -159,12 +190,28 @@ class Orchestrator:
                     f"Recebi seu áudio, {nome} — tô com um probleminha pra ouvir agora. "
                     "Pode me mandar em texto rapidinho o que você busca?"
                 )
-                await self.evo.send_text(phone, fail, delay_ms=3500)
+                await self._human_preamble(
+                    phone,
+                    remote_jid=remote_jid,
+                    message_id=message_id,
+                    started_at=started_at,
+                    presence="composing",
+                    activity_ms=2800,
+                )
+                await self.evo.send_text(phone, fail, delay_ms=0)
                 return fail
 
         if not user_text:
             reply = "Não consegui entender bem — me conta em texto ou manda o áudio de novo?"
-            await self.evo.send_text(phone, reply, delay_ms=3500)
+            await self._human_preamble(
+                phone,
+                remote_jid=remote_jid,
+                message_id=message_id,
+                started_at=started_at,
+                presence="composing",
+                activity_ms=2500,
+            )
+            await self.evo.send_text(phone, reply, delay_ms=0)
             return reply
 
         knowledge = load_knowledge()
@@ -255,9 +302,6 @@ class Orchestrator:
         self.memory.append(phone, "user", user_text)
         self.memory.append(phone, "assistant", reply)
 
-        delay = self._human_delay_ms(reply)
-        await self.evo.send_presence(phone, delay_ms=delay)
-
         want_audio = self._should_reply_audio(
             phone=phone,
             inbound_was_audio=inbound_audio,
@@ -269,24 +313,48 @@ class Orchestrator:
                 spoken = await to_spoken_script(self.llm, reply)
                 logger.info("tts spoken=%r", spoken[:160])
                 audio = await self.tts.synthesize(spoken)
-                await self.evo.send_audio(phone, audio, delay_ms=1600)
+                record_ms = self._typing_ms(spoken)
+                await self._human_preamble(
+                    phone,
+                    remote_jid=remote_jid,
+                    message_id=message_id,
+                    started_at=started_at,
+                    presence="recording",
+                    activity_ms=record_ms,
+                )
+                await self.evo.send_audio(phone, audio, delay_ms=0)
                 self._remember_outbound_mode(phone, used_audio=True)
 
-                # Links / checklist: texto complementar (áudio não carrega URL bem)
                 if "http" in reply:
-                    links = "\n".join(
-                        l for l in reply.splitlines() if "http" in l
-                    )
+                    links = "\n".join(l for l in reply.splitlines() if "http" in l)
+                    await asyncio.sleep(random.uniform(1.2, 2.0))
+                    await self.evo.send_presence(phone, delay_ms=1800, presence="composing")
                     await self.evo.send_text(
                         phone,
                         "Te mando o link por escrito também:\n" + links,
-                        delay_ms=2200,
+                        delay_ms=0,
                     )
                 return reply
             except Exception:
                 logger.exception("falha TTS; caindo para texto")
 
-        await self.evo.send_text(phone, reply, delay_ms=delay)
+        bubbles = split_whatsapp_messages(reply)
+        for idx, bubble in enumerate(bubbles):
+            typing_ms = self._typing_ms(bubble)
+            if idx == 0:
+                await self._human_preamble(
+                    phone,
+                    remote_jid=remote_jid,
+                    message_id=message_id,
+                    started_at=started_at,
+                    presence="composing",
+                    activity_ms=typing_ms,
+                )
+            else:
+                await asyncio.sleep(random.uniform(1.0, 2.2))
+                await self.evo.send_presence(phone, delay_ms=typing_ms, presence="composing")
+            await self.evo.send_text(phone, bubble, delay_ms=0)
+
         self._remember_outbound_mode(phone, used_audio=False)
         return reply
 
