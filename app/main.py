@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.6.1", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.6.0",
+        "version": "0.6.1",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
@@ -160,13 +160,17 @@ async def get_lead(phone: str, request: Request):
     meta = memory.get_meta(digits)
     ensure_lead_state(meta)
     history = memory.get_history(digits)
+    ls = meta.get("lead_state") or {}
     return {
         "ok": True,
         "phone": digits,
         "etapa": meta.get("etapa"),
-        "lead_state": meta.get("lead_state"),
+        "lead_state": ls,
+        "objecao_ativa": ls.get("objecao_ativa"),
         "pending_contract": bool(meta.get("pending_contract")),
         "contract_sent": bool(meta.get("contract_sent")),
+        "desconto_respondido": bool(meta.get("desconto_respondido")),
+        "handoff_reason": meta.get("handoff_reason"),
         "objecoes_sem_avanco": meta.get("objecoes_sem_avanco", 0),
         "full_name": meta.get("full_name"),
         "has_cpf": bool(meta.get("cpf")),

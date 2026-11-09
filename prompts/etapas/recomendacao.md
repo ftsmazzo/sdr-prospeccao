@@ -5,3 +5,5 @@
 - Mensalidade de referência: a partir de R$ 69,90.
 - Faça uma pergunta de escolha (“qual desses faz mais sentido pra você?”).
 - Só marque `curso_escolhido` + `aceite_matricula=true` se o lead escolher e quiser seguir com a matrícula explicitamente.
+- Se surgir objeção: `objecao_ativa` + categoria em `objecoes_levantadas`. Pedido de desconto → `perguntou_desconto=true`.
+- Não prometa contrato/PDF/link sem action correspondente.

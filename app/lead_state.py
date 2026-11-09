@@ -23,7 +23,17 @@ ETAPAS = (
 
 GRADUACAO = ("concluida", "cursando", "nao_tem")
 
-# Campos que o modelo pode atualizar via state_update
+OBJECAO_CATEGORIAS = (
+    "preco",
+    "tempo",
+    "validade_ead",
+    "qualidade",
+    "vou_pensar",
+    "conjuge",
+    "ja_tentei",
+    "outro",
+)
+
 STATE_WHITELIST = {
     "nome",
     "graduacao",
@@ -32,6 +42,8 @@ STATE_WHITELIST = {
     "restricao",
     "decisor",
     "objecoes_levantadas",
+    "objecao_ativa",
+    "perguntou_desconto",
     "curso_recomendado",
     "curso_escolhido",
     "curso_alternativo",
@@ -43,7 +55,6 @@ STATE_WHITELIST = {
     "proximo_passo",
 }
 
-# Nunca aceitos do modelo
 STATE_FORBIDDEN = {
     "etapa",
     "pending_contract",
@@ -52,7 +63,25 @@ STATE_FORBIDDEN = {
     "cpf",
     "birth_date",
     "objecoes_sem_avanco",
+    "desconto_respondido",
+    "handoff_reason",
+    "etapa_antes_handoff",
 }
+
+PROMISE_HINTS = (
+    "contrato",
+    "pdf",
+    "link",
+    "checkout",
+    "matrícula",
+    "matricula",
+    "preparei",
+    "vou preparar",
+    "te mando o",
+    "te envio",
+    "documento",
+    "http",
+)
 
 
 def _now_iso() -> str:
@@ -60,7 +89,6 @@ def _now_iso() -> str:
 
 
 def _as_bool(value: Any) -> bool:
-    """Parse estrito: só True real ou strings true/1/sim/yes."""
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)) and value in (0, 1):
@@ -74,6 +102,17 @@ def _as_bool(value: Any) -> bool:
     return False
 
 
+def _norm_categoria(value: Any) -> str | None:
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if not v or v in ("null", "none"):
+        return None
+    if v in OBJECAO_CATEGORIAS:
+        return v
+    return None
+
+
 def default_lead_state() -> dict[str, Any]:
     return {
         "nome": None,
@@ -83,6 +122,8 @@ def default_lead_state() -> dict[str, Any]:
         "restricao": None,
         "decisor": None,
         "objecoes_levantadas": [],
+        "objecao_ativa": None,
+        "perguntou_desconto": False,
         "curso_recomendado": None,
         "curso_escolhido": None,
         "curso_alternativo": None,
@@ -97,12 +138,21 @@ def default_lead_state() -> dict[str, Any]:
 
 
 def ensure_lead_state(meta: dict[str, Any]) -> dict[str, Any]:
-    """Garante lead_state + migra meta antigo. Retorna o dict lead_state."""
     if "objecoes_sem_avanco" not in meta:
         meta["objecoes_sem_avanco"] = 0
+    if "desconto_respondido" not in meta:
+        meta["desconto_respondido"] = False
 
     if isinstance(meta.get("lead_state"), dict) and meta.get("etapa"):
         ls = {**default_lead_state(), **meta["lead_state"]}
+        cats: list[str] = []
+        for item in ls.get("objecoes_levantadas") or []:
+            c = _norm_categoria(item)
+            if c and c not in cats:
+                cats.append(c)
+        ls["objecoes_levantadas"] = cats
+        ls["objecao_ativa"] = _norm_categoria(ls.get("objecao_ativa"))
+        ls["perguntou_desconto"] = False
         meta["lead_state"] = ls
         return ls
 
@@ -131,6 +181,7 @@ def ensure_lead_state(meta: dict[str, Any]) -> dict[str, Any]:
 def merge_state_update(ls: dict[str, Any], update: dict[str, Any] | None) -> dict[str, Any]:
     if not update:
         return ls
+    prev_ativa = ls.get("objecao_ativa")
     for key, value in update.items():
         if key in STATE_FORBIDDEN or key == "etapa":
             logger.warning("state_update ignorou campo proibido: %s", key)
@@ -139,16 +190,23 @@ def merge_state_update(ls: dict[str, Any], update: dict[str, Any] | None) -> dic
             continue
         if key == "objecoes_levantadas":
             existing = list(ls.get("objecoes_levantadas") or [])
-            if isinstance(value, list):
-                for item in value:
-                    s = str(item).strip()
-                    if s and s not in existing:
-                        existing.append(s)
-            elif value:
-                s = str(value).strip()
-                if s and s not in existing:
-                    existing.append(s)
+            items = value if isinstance(value, list) else ([value] if value else [])
+            for item in items:
+                c = _norm_categoria(item)
+                if c and c not in existing:
+                    existing.append(c)
             ls["objecoes_levantadas"] = existing
+            continue
+        if key == "objecao_ativa":
+            if value is None or (
+                isinstance(value, str) and value.strip().lower() in ("", "null", "none")
+            ):
+                ls["objecao_ativa"] = None
+            else:
+                ls["objecao_ativa"] = _norm_categoria(value)
+            continue
+        if key == "perguntou_desconto":
+            ls["perguntou_desconto"] = _as_bool(value)
             continue
         if key == "graduacao" and value is not None:
             v = str(value).strip().lower()
@@ -160,7 +218,13 @@ def merge_state_update(ls: dict[str, Any], update: dict[str, Any] | None) -> dic
             if v in ("tempo", "preco", "outro"):
                 ls["restricao"] = v
             continue
-        if key in ("aceite_matricula", "e_aluno_atual", "lead_irritado", "pediu_desconto_ou_condicao", "duvida_juridica"):
+        if key in (
+            "aceite_matricula",
+            "e_aluno_atual",
+            "lead_irritado",
+            "pediu_desconto_ou_condicao",
+            "duvida_juridica",
+        ):
             ls[key] = _as_bool(value)
             continue
         if value is None:
@@ -168,6 +232,7 @@ def merge_state_update(ls: dict[str, Any], update: dict[str, Any] | None) -> dic
         if isinstance(value, str) and not value.strip():
             continue
         ls[key] = value.strip() if isinstance(value, str) else value
+    ls["_prev_objecao_ativa"] = prev_ativa
     ls["ultima_interacao"] = _now_iso()
     return ls
 
@@ -182,66 +247,121 @@ def summarize_lead(meta: dict[str, Any]) -> str:
         f"objetivo={ls.get('objetivo')}",
         f"curso_escolhido={ls.get('curso_escolhido')}",
         f"aceite={ls.get('aceite_matricula')}",
+        f"objecao_ativa={ls.get('objecao_ativa')}",
         f"objecoes={ls.get('objecoes_levantadas')}",
+        f"desconto_respondido={meta.get('desconto_respondido')}",
+        f"handoff_reason={meta.get('handoff_reason')}",
         f"pending_contract={meta.get('pending_contract')}",
     ]
     return "; ".join(parts)
 
 
+def _enter_handoff(meta: dict[str, Any], reason: str) -> str:
+    if meta.get("etapa") != "handoff_humano":
+        meta["etapa_antes_handoff"] = meta.get("etapa") or "recomendacao"
+    meta["handoff_reason"] = reason
+    meta["etapa"] = "handoff_humano"
+    logger.info("handoff_humano reason=%s summary=%s", reason, summarize_lead(meta))
+    return "handoff_humano"
+
+
+def _clear_handoff_flags(ls: dict[str, Any], meta: dict[str, Any]) -> None:
+    ls["pediu_desconto_ou_condicao"] = False
+    ls["duvida_juridica"] = False
+    ls["lead_irritado"] = False
+    meta["objecoes_sem_avanco"] = 0
+    meta.pop("handoff_reason", None)
+
+
+def _ensure_preco_objection(ls: dict[str, Any]) -> None:
+    hist = list(ls.get("objecoes_levantadas") or [])
+    if "preco" not in hist:
+        hist.append("preco")
+        ls["objecoes_levantadas"] = hist
+    if not ls.get("objecao_ativa"):
+        ls["objecao_ativa"] = "preco"
+
+
 def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str:
-    """Decide a próxima etapa. Mutates meta['etapa']."""
     ls = meta["lead_state"]
     etapa = meta.get("etapa") or "abertura"
     prev = etapa
+    prev_ativa = ls.pop("_prev_objecao_ativa", ls.get("objecao_ativa"))
 
-    # Handoff imediato
-    if ls.get("pediu_desconto_ou_condicao") or ls.get("duvida_juridica") or ls.get("lead_irritado"):
+    perguntou = bool(ls.get("perguntou_desconto"))
+    ls["perguntou_desconto"] = False
+    mark_desconto_respondido = False
+    if perguntou:
+        if meta.get("desconto_respondido"):
+            return _enter_handoff(meta, "desconto_insistencia")
+        _ensure_preco_objection(ls)
+        mark_desconto_respondido = True
+
+    if ls.get("pediu_desconto_ou_condicao"):
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return _enter_handoff(meta, "condicao_especial")
+    if ls.get("duvida_juridica"):
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return _enter_handoff(meta, "duvida_juridica")
+    if ls.get("lead_irritado"):
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return _enter_handoff(meta, "lead_irritado")
+
+    if prev == "handoff_humano":
+        if ls.get("curso_escolhido") and ls.get("aceite_matricula") and not ls.get("objecao_ativa"):
+            _clear_handoff_flags(ls, meta)
+            meta["etapa"] = "fechamento"
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "fechamento"
         meta["etapa"] = "handoff_humano"
-        logger.info("handoff_humano trigger imediato phone_meta summary=%s", summarize_lead(meta))
-        return meta["etapa"]
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return "handoff_humano"
 
-    # Aluno atual só com flag explícita
     if ls.get("e_aluno_atual"):
         meta["etapa"] = "aluno_atual"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return meta["etapa"]
 
-    # Graduação
     grad = ls.get("graduacao")
     if grad == "nao_tem":
         meta["etapa"] = "nao_elegivel"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return meta["etapa"]
 
-    # Contrato já enviado
     if meta.get("contract_sent"):
         meta["etapa"] = "contrato_enviado"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return meta["etapa"]
 
-    # Contagem de objeções sem avanço (antes de decidir handoff)
-    objecoes = list(ls.get("objecoes_levantadas") or [])
-    prev_count = int(meta.get("_objecoes_count_seen", 0) or 0)
-    new_objecoes = max(0, len(objecoes) - prev_count)
-    if new_objecoes and prev in ("objecao", "fechamento", "recomendacao"):
-        meta["objecoes_sem_avanco"] = int(meta.get("objecoes_sem_avanco") or 0) + new_objecoes
-    if len(objecoes) != prev_count:
-        meta["_objecoes_count_seen"] = len(objecoes)
+    hist = list(ls.get("objecoes_levantadas") or [])
+    seen = set(meta.get("_objecoes_cats_seen") or [])
+    new_cats = [c for c in hist if c not in seen]
+    ativa = ls.get("objecao_ativa")
+    reopened = bool(ativa and prev_ativa is None and ativa in seen)
+
+    bumped = 0
+    if prev in ("objecao", "fechamento", "recomendacao"):
+        bumped += len(new_cats)
+        if reopened and ativa not in new_cats:
+            bumped += 1
+    if bumped:
+        meta["objecoes_sem_avanco"] = int(meta.get("objecoes_sem_avanco") or 0) + bumped
+    if hist:
+        meta["_objecoes_cats_seen"] = sorted(set(seen) | set(hist))
 
     if int(meta.get("objecoes_sem_avanco") or 0) >= handoff_max_objecoes:
-        meta["etapa"] = "handoff_humano"
-        logger.info("handoff_humano por objecoes_sem_avanco=%s", meta.get("objecoes_sem_avanco"))
-        return meta["etapa"]
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return _enter_handoff(meta, "objecoes_sem_avanco")
 
-    # Transição para trás: nova objeção em fechamento
-    if (
-        prev == "fechamento"
-        and new_objecoes
-        and len(objecoes) > int(meta.get("_objecoes_at_fechamento", 0) or 0)
-    ):
-        meta["_etapa_antes_objecao"] = "fechamento"
-        meta["etapa"] = "objecao"
-        meta["_objecoes_at_fechamento"] = len(objecoes)
-        return meta["etapa"]
-
-    # Fluxo principal
     if prev in ("abertura",):
         meta["etapa"] = "qualificacao"
         etapa = "qualificacao"
@@ -249,6 +369,8 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
     if etapa in ("qualificacao", "abertura"):
         if grad == "cursando":
             meta["etapa"] = "qualificacao"
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
             return meta["etapa"]
         if grad == "concluida" and ls.get("area_interesse") and ls.get("objetivo"):
             meta["etapa"] = "recomendacao"
@@ -256,51 +378,86 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
             etapa = "recomendacao"
         else:
             meta["etapa"] = "qualificacao"
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
             return meta["etapa"]
 
     if etapa == "nao_elegivel":
         if grad == "concluida":
             meta["etapa"] = "qualificacao"
             return advance_etapa(meta, handoff_max_objecoes=handoff_max_objecoes)
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return "nao_elegivel"
 
     if etapa == "recomendacao":
+        if ativa:
+            meta["_etapa_antes_objecao"] = "recomendacao"
+            meta["etapa"] = "objecao"
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "objecao"
         if ls.get("curso_escolhido") and ls.get("aceite_matricula"):
             meta["etapa"] = "fechamento"
             meta["objecoes_sem_avanco"] = 0
-            meta["_objecoes_at_fechamento"] = len(objecoes)
-            return meta["etapa"]
-        if objecoes:
-            meta["etapa"] = "objecao"
-            meta["_etapa_antes_objecao"] = "recomendacao"
-            return meta["etapa"]
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "fechamento"
         meta["etapa"] = "recomendacao"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return "recomendacao"
 
+    if etapa == "fechamento":
+        if ativa:
+            meta["_etapa_antes_objecao"] = "fechamento"
+            ls["aceite_matricula"] = False
+            meta["etapa"] = "objecao"
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "objecao"
+        meta["etapa"] = "fechamento"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return "fechamento"
+
     if etapa == "objecao":
-        if ls.get("curso_escolhido") and ls.get("aceite_matricula"):
+        if not ativa and ls.get("curso_escolhido") and ls.get("aceite_matricula"):
             meta["etapa"] = "fechamento"
             meta["objecoes_sem_avanco"] = 0
-            return meta["etapa"]
-        if not objecoes and not ls.get("curso_escolhido"):
-            meta["etapa"] = "recomendacao"
-            return meta["etapa"]
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "fechamento"
+        if not ativa:
+            back = meta.get("_etapa_antes_objecao") or "recomendacao"
+            if back == "fechamento" and not ls.get("aceite_matricula"):
+                back = "recomendacao"
+            if back not in ("recomendacao", "fechamento"):
+                back = "recomendacao"
+            meta["etapa"] = back
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return back
         meta["etapa"] = "objecao"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return "objecao"
-
-    if etapa == "fechamento":
-        meta["etapa"] = "fechamento"
-        return "fechamento"
 
     if etapa == "contrato_enviado":
         meta["etapa"] = "contrato_enviado"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return "contrato_enviado"
 
-    if etapa in ("aluno_atual", "handoff_humano", "matriculado"):
+    if etapa in ("aluno_atual", "matriculado"):
         meta["etapa"] = etapa
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
         return etapa
 
     meta["etapa"] = etapa
+    if mark_desconto_respondido:
+        meta["desconto_respondido"] = True
     return meta["etapa"]
 
 
@@ -313,8 +470,10 @@ def can_run_action(meta: dict[str, Any], action: str | None) -> tuple[bool, str]
     if action in ("LEAD_DATA", "FOLLOWUP_DOC"):
         if etapa != "fechamento":
             return False, f"action={action} bloqueada etapa={etapa}"
-        if not ls.get("curso_escolhido") or not ls.get("aceite_matricula"):
-            return False, f"action={action} exige curso_escolhido+aceite"
+        if not ls.get("curso_escolhido"):
+            return False, f"action={action} sem_curso"
+        if not ls.get("aceite_matricula"):
+            return False, f"action={action} sem_aceite"
         if ls.get("graduacao") in ("cursando", "nao_tem"):
             return False, f"action={action} bloqueada graduacao={ls.get('graduacao')}"
         if action == "FOLLOWUP_DOC" and meta.get("pending_contract"):
@@ -329,12 +488,50 @@ def can_run_action(meta: dict[str, Any], action: str | None) -> tuple[bool, str]
         if etapa not in ("fechamento", "contrato_enviado"):
             return False, f"CHECKOUT_READY bloqueada etapa={etapa}"
         if not ls.get("curso_escolhido"):
-            return False, "CHECKOUT_READY sem curso_escolhido"
+            return False, "CHECKOUT_READY sem_curso"
         if not ls.get("aceite_matricula"):
-            return False, "CHECKOUT_READY exige aceite_matricula"
+            return False, "CHECKOUT_READY sem_aceite"
         return True, "ok"
 
     return False, f"action desconhecida {action}"
+
+
+def reply_looks_like_promise(reply: str) -> bool:
+    low = (reply or "").lower()
+    return any(h in low for h in PROMISE_HINTS)
+
+
+def rewrite_blocked_action_reply(reason: str, reply: str, ls: dict[str, Any]) -> str:
+    """Substitui reply que promete entrega quando a action não pode/não deve rodar."""
+    _ = reply
+    if "pending_contract" in reason:
+        return (
+            "Seu contrato já está sendo preparado. Em alguns minutinhos eu te mando "
+            "o informativo por aqui."
+        )
+    if "contract_sent" in reason:
+        return (
+            "O contrato já foi enviado. Se estiver tudo certo, me avisa que seguimos "
+            "com a confirmação da matrícula."
+        )
+    # Preferir o que falta no estado (mesmo se o reason for só etapa)
+    if not ls.get("curso_escolhido") or "sem_curso" in reason:
+        return "Antes de eu preparar o contrato, me confirma qual curso você quer seguir?"
+    if not ls.get("aceite_matricula") or "sem_aceite" in reason:
+        curso = ls.get("curso_escolhido") or "esse curso"
+        return (
+            f"Perfeito — só pra eu seguir certo: você confirma que quer matricular "
+            f"em {curso} agora?"
+        )
+    if reason == "promessa_sem_acao" or "bloqueada etapa" in reason or "etapa=" in reason:
+        return (
+            "Quando estiver pronto, me manda por escrito nome completo, CPF e "
+            "data de nascimento que eu preparo o contrato."
+        )
+    return (
+        "Ainda preciso de uma confirmação sua antes de seguir com documentos. "
+        "Me diz qual curso você quer e se podemos seguir com a matrícula."
+    )
 
 
 def reset_etapa(meta: dict[str, Any], etapa: str = "qualificacao") -> dict[str, Any]:
@@ -350,4 +547,7 @@ def reset_etapa(meta: dict[str, Any], etapa: str = "qualificacao") -> dict[str, 
     ls["pediu_desconto_ou_condicao"] = False
     ls["duvida_juridica"] = False
     ls["e_aluno_atual"] = False
+    ls["objecao_ativa"] = None
+    ls["perguntou_desconto"] = False
+    meta.pop("handoff_reason", None)
     return meta

@@ -15,6 +15,8 @@ from app.lead_state import (
     can_run_action,
     ensure_lead_state,
     merge_state_update,
+    reply_looks_like_promise,
+    rewrite_blocked_action_reply,
     summarize_lead,
 )
 from app.memory import ConversationMemory
@@ -205,12 +207,17 @@ class Orchestrator:
         action = agent.action
         data = agent.action_data or {}
         ok, reason = can_run_action(meta, action)
+        blocked_delivery = False
+        blocked_reason = reason
         if action and not ok:
             logger.info("action ignorada phone=%s reason=%s", phone, reason)
+            if action in ("FOLLOWUP_DOC", "CHECKOUT_READY") and reply_looks_like_promise(reply):
+                blocked_delivery = True
             action = None
 
         course: str | None = None
         ls = meta["lead_state"]
+        delivery_ran = False
 
         if action == "LEAD_DATA":
             full_name = str(data.get("full_name") or "").strip()
@@ -225,7 +232,6 @@ class Orchestrator:
                 logger.warning("LEAD_DATA incompleto/CPF inválido phone=%s", phone)
 
         elif action == "FOLLOWUP_DOC":
-            # curso_escolhido no estado é a fonte de verdade
             course = str(ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni").strip()
             full_name = str(data.get("full_name") or meta.get("full_name") or ls.get("nome") or "").strip()
             cpf = normalize_cpf(str(data.get("cpf") or meta.get("cpf") or ""))
@@ -256,6 +262,7 @@ class Orchestrator:
                 )
                 meta["pending_contract"] = True
                 meta["course"] = course
+                delivery_ran = True
                 logger.info("FOLLOWUP_DOC agendado phone=%s course=%s", phone, course)
 
         elif action == "CHECKOUT_READY":
@@ -268,9 +275,20 @@ class Orchestrator:
                 f"Perfeito — preparei sua matrícula (demonstração):\n{link}\n\n"
                 "É só abrir e confirmar. Documentos complementares podem ser enviados depois."
             )
+            delivery_ran = True
+
+        if blocked_delivery:
+            reply = rewrite_blocked_action_reply(blocked_reason, reply, ls)
+            logger.info("promessa reescrita phone=%s reason=%s", phone, blocked_reason)
+        elif (
+            not delivery_ran
+            and not meta.get("pending_contract")
+            and reply_looks_like_promise(reply)
+        ):
+            reply = rewrite_blocked_action_reply("promessa_sem_acao", reply, ls)
+            logger.info("promessa_sem_acao phone=%s", phone)
 
         return reply, course
-
     async def handle_inbound(
         self,
         phone: str,
@@ -346,6 +364,8 @@ class Orchestrator:
             meta_flags={
                 "pending_contract": meta.get("pending_contract"),
                 "contract_sent": meta.get("contract_sent"),
+                "desconto_respondido": meta.get("desconto_respondido"),
+                "handoff_reason": meta.get("handoff_reason"),
             },
         )
         history = self.memory.get_history(phone)

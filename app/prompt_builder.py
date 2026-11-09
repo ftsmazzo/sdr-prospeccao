@@ -23,6 +23,8 @@ Responda APENAS com um JSON válido (sem markdown, sem texto fora do JSON):
     "restricao": null,
     "decisor": null,
     "objecoes_levantadas": [],
+    "objecao_ativa": null,
+    "perguntou_desconto": false,
     "curso_recomendado": null,
     "curso_escolhido": null,
     "curso_alternativo": null,
@@ -39,10 +41,17 @@ Responda APENAS com um JSON válido (sem markdown, sem texto fora do JSON):
 
 Regras do state_update:
 - graduacao: "concluida" | "cursando" | "nao_tem" (ou omita)
+- objecoes_levantadas / objecao_ativa: só categorias
+  preco | tempo | validade_ead | qualidade | vou_pensar | conjuge | ja_tentei | outro
+- objecao_ativa = categoria quando o lead levanta uma objeção; null quando ela foi respondida e o lead não voltou a ela
+- perguntou_desconto = true SOMENTE se nesta mensagem o lead pediu desconto, abatimento ou valor menor
+  ("achei caro" sem pedir desconto = só objecao_ativa preco, perguntou_desconto false)
+- pediu_desconto_ou_condicao = true SOMENTE para condição específica (corporativo, parcelamento diferente, bolsa)
 - curso_recomendado = o que VOCÊ sugeriu; curso_escolhido = só o que o LEAD escolheu
 - aceite_matricula = true SOMENTE se o lead disse explicitamente que quer seguir com a matrícula daquele curso
 - e_aluno_atual = true SOMENTE se o lead diz que já é aluno / problema em curso em andamento (boleto de matrícula nova NÃO conta)
 - NÃO envie campo "etapa" (o sistema decide)
+- NÃO prometa contrato, PDF ou link na reply se action for null
 
 Actions (só quando permitido pelo fluxo):
 - LEAD_DATA: action_data { "full_name", "cpf", "birth_date" }
@@ -71,6 +80,8 @@ def build_system_prompt(*, etapa: str, lead_state: dict[str, Any], meta_flags: d
         "etapa_atual_sistema": etapa,
         "pending_contract": bool(meta_flags.get("pending_contract")),
         "contract_sent": bool(meta_flags.get("contract_sent")),
+        "desconto_respondido": bool(meta_flags.get("desconto_respondido")),
+        "handoff_reason": meta_flags.get("handoff_reason"),
     }
     return (
         "Você é o Edu, consultor de matrícula humanizado da Faveni Polo Catanduva no WhatsApp.\n"
