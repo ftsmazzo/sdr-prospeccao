@@ -6,7 +6,15 @@ __pycache__
 .env.*
 .venv
 venv
-docs
-*.md
 .pytest_cache
 .mypy_cache
+README.md
+AGENTS.md
+docs/PRD.md
+docs/TRD.md
+docs/FLUXO-APP.md
+docs/UIUX.md
+docs/ESQUEMA-BACKEND.md
+docs/PLANO-IMPLEMENTACAO.md
+docs/REPASSE-SOCIO.md
+docs/EVOLUTION-PERFIL-WEBHOOK.md
