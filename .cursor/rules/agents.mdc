@@ -1,0 +1,6 @@
+---
+description: Regras do projeto Edu SDR — fonte AGENTS.md
+alwaysApply: true
+---
+
+Seguir `AGENTS.md` na raiz do repositório como fonte única de regras (produto, stack, segurança e fluxo de trabalho).
