@@ -31,7 +31,7 @@ O agente não precisa listar 1000 cursos: descobrir área, alinhar 1–2 opçõe
 1. Reconhecimento MEC — diploma válido no Brasil; pós EAD com mesma validade do presencial.
 2. Flexibilidade — estuda no próprio ritmo; ideal para quem trabalha.
 3. Conclusão — especialização em até 6 meses, dependendo do curso e da sua dedicação; há faixa institucional de 6 a 18 meses.
-4. Mensalidade (demo) — a partir de R$ 69,90; se pedirem curso específico, manter “a partir de R$ 69,90 conforme área/carga”.
+4. Mensalidade de referência — a partir de R$ 69,90; se pedirem curso específico, manter “a partir de R$ 69,90 conforme área/carga”.
 5. Troca de curso — até 2 mudanças sem custo nos primeiros 90 dias após a matrícula.
 6. Suporte — tutoria (seg–sex, 08h–21h45 no material do grupo), WhatsApp, telefone 0800, chat, polo.
 7. Material — AVA com videoaulas, e-books, fóruns; online gratuito; impresso opcional ~R$ 160 + frete.
@@ -59,7 +59,7 @@ O agente não precisa listar 1000 cursos: descobrir área, alinhar 1–2 opçõe
 | Material impresso? | Online gratuito; impresso opcional ~R$ 160 + frete. |
 | Só quero ver cursos | Filtrar por área e avançar 1–3 opções + próximo passo. |
 
-## Contato e atmosfera (demo)
+## Contato e atmosfera
 
 - A conversa neste WhatsApp já é o atendimento de matrícula.
 - Endereço (se perguntarem): R. Luiz Jorge, 502 – Parque Res. Paraíso, Catanduva-SP.

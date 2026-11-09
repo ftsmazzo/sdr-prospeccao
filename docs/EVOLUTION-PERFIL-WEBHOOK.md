@@ -25,8 +25,10 @@ Header: `apikey: <EVOLUTION_API_KEY>`
 
 ### Secret do webhook (sem logout / sem QR)
 
-Evolution API ≥ 2.1.1 aceita `headers` no `POST /webhook/set/{instance}`.  
-**Não** use o dashboard se ele não expõe headers — use a API.
+Evolution API 2.x (ex. **2.3.7**) aceita `headers` no `POST /webhook/set/{instance}`.  
+Body aninhado: `{ "webhook": { "enabled", "url", "events", "headers", "byEvents", "base64" } }`.  
+**Não** use o dashboard se ele não expõe headers — use a API.  
+`show` não sobrescreve backup existente (salva com timestamp).
 
 Script pronto (você executa; o agente não roda contra a instance):
 

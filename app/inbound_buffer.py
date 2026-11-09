@@ -133,22 +133,39 @@ ProcessBatchFn = Callable[[str, list[dict[str, Any]]], Awaitable[None]]
 
 
 async def inbound_worker(stop_event: asyncio.Event, process_batch: ProcessBatchFn) -> None:
+    """Dispara um create_task por telefone; lock na tarefa; aguarda tasks no shutdown."""
     buf = get_inbound_buffer()
+    running: set[asyncio.Task] = set()
     logger.info("inbound debounce worker iniciado")
+
+    def _task_done(task: asyncio.Task) -> None:
+        running.discard(task)
+        if not task.cancelled() and task.exception():
+            logger.error("lote inbound falhou: %s", task.exception())
+
+    async def _run_phone(phone: str) -> None:
+        try:
+            batch = buf.drain(phone)
+            if batch:
+                await process_batch(phone, batch)
+        finally:
+            buf.unlock(phone)
+
     while not stop_event.is_set():
         try:
             for phone in buf.due_phones():
                 if not buf.try_lock(phone):
                     continue
-                try:
-                    batch = buf.drain(phone)
-                    if batch:
-                        await process_batch(phone, batch)
-                finally:
-                    buf.unlock(phone)
+                task = asyncio.create_task(_run_phone(phone), name=f"inbound-{phone}")
+                running.add(task)
+                task.add_done_callback(_task_done)
         except Exception:
             logger.exception("erro no inbound worker")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=1.0)
         except asyncio.TimeoutError:
             pass
+
+    if running:
+        logger.info("aguardando %s lotes inbound no shutdown", len(running))
+        await asyncio.gather(*running, return_exceptions=True)
