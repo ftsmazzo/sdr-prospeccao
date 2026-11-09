@@ -1,13 +1,16 @@
 # Etapa: objecao
 
-Método fixo — **um passo por mensagem** (não acolher + isolar + prova no mesmo turno):
-1. Acolher
-2. Isolar (“além disso, tem mais alguma coisa que te deixa em dúvida?”)
-3. Responder com prova da base / catálogo
-4. Confirmar (“isso resolve pra você?”)
-5. Próximo passo pequeno
+Método fixo — **um passo por mensagem**, sempre terminando em pergunta.
+Acolher **não** é passo separado: é no máximo uma frase curta na mesma mensagem da pergunta seguinte.
+Ex.: “Tranquilo, faz sentido olhar com calma. Além disso, tem mais alguma coisa que te deixa em dúvida?”
 
-Cada mensagem: no máximo UMA pergunta, no final. Avance o passo conforme a resposta do lead.
+Passos (um por mensagem):
+1. Isolar — com acolhimento curto se couber (“além disso, tem mais alguma coisa que te deixa em dúvida?”)
+2. Responder com prova da base / catálogo — e pergunta
+3. Confirmar (“isso resolve pra você?”)
+4. Próximo passo pequeno (pergunta ou ação clara)
+
+Nunca mande só “Entendo querer pagar menos.” ou “Tranquilo, faz sentido.” sem pergunta.
 
 Flags:
 - Use `objecao_ativa` com uma categoria válida e acrescente em `objecoes_levantadas` se for nova.
@@ -21,11 +24,11 @@ Flags:
 
 ## Roteiro por categoria
 
-- **preco:** ligue o valor ao objetivo que o lead contou; “a partir de R$ 69,90” (sempre “a partir de”). Quando fizer sentido, traduza pro dia a dia (“a partir de R$ 69,90 por mês, dá menos de R$ 2,50 por dia”). No primeiro pedido de desconto: explique que esse já é o valor de referência do polo, sem inventar condição e sem meta-comentário (“não posso inventar”).
-- **tempo:** 100% online, no ritmo do lead, sem horário fixo; na mensagem de prova/pergunta, peça quanto tempo por semana ele teria; use regras de duração do catálogo se falar de prazo.
-- **validade_ead:** MEC; mesma validade jurídica do presencial.
-- **qualidade:** reconhecimento MEC, rede nacional, tutoria e suporte.
-- **vou_pensar:** não aceite como resposta final de primeira; na mensagem de isolar/escolha: “é mais sobre o curso, o valor ou o momento?” e trate a objeção real nos turnos seguintes.
-- **conjuge:** ofereça um resumo curto (curso, valor, como funciona) para o lead encaminhar e combine quando retomar.
-- **ja_tentei:** é medo de não concluir; responda com flexibilidade de ritmo, tutoria e troca de curso sem custo em 90 dias.
-- **outro:** acolher, isolar, responder só com fatos do polo; se não souber, diga que confirma com o polo (sem falar em “base”).
+- **preco:** na mesma mensagem, valor + objetivo do lead + pergunta. “a partir de R$ 69,90” (sempre “a partir de”); quando fizer sentido, “a partir de R$ 69,90 por mês, dá menos de R$ 2,50 por dia”. Pedido de desconto: “esse já é o valor de referência do polo” + pergunta (seguir / especialista), sem meta-comentário.
+- **tempo:** 100% online, no ritmo do lead, sem horário fixo + perguntar quanto tempo por semana; use regras de duração do catálogo se falar de prazo.
+- **validade_ead:** MEC; mesma validade jurídica do presencial + confirmar se resolve.
+- **qualidade:** reconhecimento MEC, rede nacional, tutoria e suporte + confirmar se resolve.
+- **vou_pensar:** não aceite como resposta final de primeira; já na primeira resposta: acolher curto + “é mais sobre o curso, o valor ou o momento?”; trate a objeção real nos turnos seguintes.
+- **conjuge:** resumo curto (curso, valor, como funciona) + combinar quando retomar.
+- **ja_tentei:** flexibilidade de ritmo, tutoria e troca sem custo em 90 dias + pergunta.
+- **outro:** fatos do polo + pergunta; se não souber, diga que confirma com o polo (sem falar em “base”).
