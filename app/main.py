@@ -46,7 +46,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.3.1",
+        "version": "0.3.2",
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
