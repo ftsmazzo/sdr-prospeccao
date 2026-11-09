@@ -166,6 +166,7 @@ class FollowUpScheduler:
             cpf=cpf,
             birth_date=birth,
             course=course,
+            agent_name=self.settings.agent_name,
         )
         caption = (
             f"{first}, como combinei: segue o informativo/contrato demonstrativo "

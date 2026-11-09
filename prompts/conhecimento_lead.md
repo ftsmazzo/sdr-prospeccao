@@ -1,6 +1,6 @@
 # Conhecimento para o lead — Faveni Polo Catanduva
 
-Fatos que o Edu pode usar na conversa. Não inventar além disso.
+Fatos que a consultora/consultor pode usar na conversa. Não inventar além disso.
 
 ## Instituição
 

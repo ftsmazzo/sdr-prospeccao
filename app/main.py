@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.6.2", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.7.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,9 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.6.2",
+        "version": "0.7.0",
+        "agent_name": settings.agent_name,
+        "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
         "evolution": bool(settings.evolution_api_key and settings.evolution_base_url),
         "elevenlabs": bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id),
@@ -392,6 +394,6 @@ def checkout_confirm(token: str):
 <body style="font-family:Georgia,serif;background:#f7f4ef;padding:2.5rem 1.25rem;max-width:32rem;margin:0 auto">
   <h1>Matrícula registrada — demonstração</h1>
   <p>Pagamento simulado confirmado para <strong>{session.course_label}</strong>.</p>
-  <p>Pode voltar ao WhatsApp — o Edu continua te acompanhando.</p>
+  <p>Pode voltar ao WhatsApp — {get_settings().agent_name} continua te acompanhando.</p>
 </body></html>"""
     )

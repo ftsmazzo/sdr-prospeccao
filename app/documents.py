@@ -9,10 +9,12 @@ def build_contrato_pdf(
     cpf: str = "",
     birth_date: str = "",
     course: str = "Pós-Graduação EAD Faveni",
+    agent_name: str = "Edu",
 ) -> bytes:
     nome = lead_name.strip() or "Interessado(a)"
     cpf_line = cpf.strip() or "a confirmar"
     nasc = birth_date.strip() or "a confirmar"
+    agent = (agent_name or "Edu").strip() or "Edu"
     lines = [
         "FAVENI POLO CATANDUVA — DOCUMENTO DEMO",
         "Contrato / Informativo de Matricula (simulacao)",
@@ -27,11 +29,11 @@ def build_contrato_pdf(
         "Documentos complementares (RG/CNH, diploma ou declaracao,",
         "historico e certidao) podem ser entregues depois da confirmacao.",
         "",
-        "Este PDF e apenas demonstracao do agente Edu.",
+        f"Este PDF e apenas demonstracao da consultora/consultor {agent}.",
         "Nao possui validade juridica e nao gera cobranca.",
         "",
         "Se os dados estiverem corretos, confirme a matricula pelo link",
-        "que o Edu enviara em seguida nesta conversa.",
+        f"que {agent} enviara em seguida nesta conversa.",
     ]
     return _simple_pdf(lines)
 

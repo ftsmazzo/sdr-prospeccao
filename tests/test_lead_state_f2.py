@@ -160,9 +160,14 @@ def test_prompt_builder_inclui_schema():
         etapa="abertura",
         lead_state=ensure_lead_state({}),
         meta_flags={},
+        agent_name="Ana",
+        agent_gender="f",
     )
     assert "perguntou_desconto" in p
     assert "objecao_ativa" in p
+    assert "Você é a Ana, consultora" in p
+    assert "obrigada" in p
+    assert "Você é o Edu, consultor" not in p
 
 
 def test_saida_handoff_condicao_especial_com_aceite():

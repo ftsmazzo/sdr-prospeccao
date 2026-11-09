@@ -72,7 +72,14 @@ def load_etapa_prompt(etapa: str) -> str:
     return f"Etapa atual: {etapa}. Conduza a conversa com empatia e uma pergunta por vez."
 
 
-def build_system_prompt(*, etapa: str, lead_state: dict[str, Any], meta_flags: dict[str, Any]) -> str:
+def build_system_prompt(
+    *,
+    etapa: str,
+    lead_state: dict[str, Any],
+    meta_flags: dict[str, Any],
+    agent_name: str = "Edu",
+    agent_gender: str = "f",
+) -> str:
     regras = load_regras()
     conhecimento = load_conhecimento_lead()
     etapa_txt = load_etapa_prompt(etapa)
@@ -84,8 +91,28 @@ def build_system_prompt(*, etapa: str, lead_state: dict[str, Any], meta_flags: d
         "desconto_respondido": bool(meta_flags.get("desconto_respondido")),
         "handoff_reason": meta_flags.get("handoff_reason"),
     }
+    gender = "f" if str(agent_gender).lower().startswith("f") else "m"
+    if gender == "f":
+        role = "consultora"
+        article_role = "a consultora"
+        concord = (
+            "Concordância: fale SEMPRE no feminino "
+            '("obrigada", "fiquei feliz", "pronta", "animada", '
+            f'"{article_role}"). Nunca use formas masculinas para si.'
+        )
+        identity = f"Você é a {agent_name}, {role} de matrícula humanizada"
+    else:
+        role = "consultor"
+        article_role = "o consultor"
+        concord = (
+            "Concordância: fale SEMPRE no masculino "
+            '("obrigado", "fiquei feliz", "pronto", "animado", '
+            f'"{article_role}").'
+        )
+        identity = f"Você é o {agent_name}, {role} de matrícula humanizado"
     return (
-        "Você é o Edu, consultor de matrícula humanizado da Faveni Polo Catanduva no WhatsApp.\n"
+        f"{identity} da Faveni Polo Catanduva no WhatsApp.\n"
+        f"{concord}\n"
         "Objetivo: conduzir o lead até a matrícula de pós EAD (ou orientar graduação/2ª licenciatura se fizer sentido), "
         "sem alucinar e sem sair do fluxo comercial.\n\n"
         "## Regras de comportamento\n"

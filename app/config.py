@@ -23,14 +23,20 @@ class Settings(BaseSettings):
     evolution_base_url: str = ""
     evolution_api_key: str = ""
     evolution_instance: str = "poli"
+    # false = envia OGG Opus como PTT sem re-encode (melhor p/ nota de voz já processada)
+    evolution_audio_encoding: bool = False
+
+    # Nome/gênero exibidos ao lead (projeto interno continua "Edu SDR")
+    agent_name: str = "Edu"
+    agent_gender: str = "f"  # "f" | "m"
 
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     elevenlabs_model_id: str = "eleven_v4"
-    elevenlabs_stability: float = 0.4
+    elevenlabs_stability: float = 0.35
     elevenlabs_similarity: float = 0.75
-    elevenlabs_style: float = 0.1
-    elevenlabs_speed: float = 1.05
+    elevenlabs_style: float = 0.0
+    elevenlabs_speed: float = 1.0
 
     human_idle_min_ms: int = 10000
     human_idle_max_ms: int = 15000

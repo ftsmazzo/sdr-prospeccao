@@ -49,6 +49,25 @@ chmod +x scripts/evolution_webhook_secret.sh
 No Edu: deixe `WEBHOOK_SECRET_ENFORCE=false` até ver nos logs `secret=ok`; depois `true`.  
 Admin da API: só header `X-Admin-Secret` (nunca query string).
 
+### Script de perfil (sem logout / sem QR)
+
+Mesmo padrão do webhook — você executa; o agente não roda contra a instance:
+
+```bash
+export EVOLUTION_BASE_URL="https://SUA-EVOLUTION"
+export EVOLUTION_API_KEY="..."
+export EVOLUTION_INSTANCE="poli"
+export PROFILE_NAME="${AGENT_NAME:-Edu}"
+export PROFILE_PICTURE_URL="https://SEU_HOST/avatar.jpg"
+export PROFILE_STATUS="Consultoria de matrícula · Faveni"
+
+chmod +x scripts/evolution_profile.sh
+./scripts/evolution_profile.sh show
+./scripts/evolution_profile.sh apply-name
+./scripts/evolution_profile.sh apply-picture
+./scripts/evolution_profile.sh apply-status
+```
+
 ### Exemplo curl (ajuste BASE / INSTANCE / KEY)
 
 ```bash

@@ -3,6 +3,7 @@ import logging
 import random
 import time
 
+from app.audio_post import to_whatsapp_voice
 from app.checkout import create_checkout
 from app.clients.elevenlabs import ElevenLabsClient
 from app.clients.evolution import EvolutionClient
@@ -29,12 +30,16 @@ from app.schemas import (
     parse_agent_response,
     safe_fallback_response,
 )
-from app.speech import to_spoken_script
+from app.speech import (
+    asks_or_confirms_personal_data,
+    contains_link,
+    extract_audio_opening,
+    to_spoken_script,
+)
 
 logger = logging.getLogger("edu.orchestrator")
 
 AUDIO_KEY_HINTS = (
-    "matricul",
     "fech",
     "pagamento",
     "checkout",
@@ -100,6 +105,8 @@ class Orchestrator:
     ) -> bool:
         if not self.tts.enabled:
             return False
+        if asks_or_confirms_personal_data(reply) or contains_link(reply):
+            return False
         meta = self.memory.get_meta(phone)
         consecutive_audio = int(meta.get("consecutive_audio_out", 0) or 0)
         low = reply.lower()
@@ -113,6 +120,14 @@ class Orchestrator:
         if key_moment and consecutive_audio == 0:
             return random.random() < 0.55
         return False
+
+    def _allow_expression_tags(self, meta: dict, reply: str, lead_irritado_turn: bool) -> bool:
+        etapa = meta.get("etapa") or ""
+        if etapa in ("handoff_humano", "aluno_atual"):
+            return False
+        if lead_irritado_turn:
+            return False
+        return not asks_or_confirms_personal_data(reply)
 
     def _remember_outbound_mode(self, phone: str, *, used_audio: bool) -> None:
         meta = self.memory.get_meta(phone)
@@ -367,6 +382,8 @@ class Orchestrator:
                 "desconto_respondido": meta.get("desconto_respondido"),
                 "handoff_reason": meta.get("handoff_reason"),
             },
+            agent_name=self.settings.agent_name,
+            agent_gender=self.settings.agent_gender,
         )
         history = self.memory.get_history(phone)
         messages: list[dict] = [{"role": "system", "content": system}]
@@ -396,7 +413,8 @@ class Orchestrator:
 
         agent = await self._call_agent_json(messages)
 
-        # merge fatos (sem etapa)
+        # merge fatos (sem etapa); capturar flags de turno antes do advance zerar
+        lead_irritado_turn = bool(agent.state_update.get("lead_irritado"))
         merge_state_update(ls, agent.state_update)
         meta["lead_state"] = ls
         advance_etapa(meta, handoff_max_objecoes=self.settings.handoff_max_objecoes)
@@ -417,9 +435,20 @@ class Orchestrator:
         )
         if want_audio:
             try:
-                spoken = await to_spoken_script(self.llm, reply)
-                logger.info("tts spoken=%r", spoken[:160])
-                audio = await self.tts.synthesize(spoken)
+                allow_tags = self._allow_expression_tags(meta, reply, lead_irritado_turn)
+                spoken = await to_spoken_script(
+                    self.llm,
+                    reply,
+                    agent_name=self.settings.agent_name,
+                    agent_gender=self.settings.agent_gender,
+                    allow_expression_tags=allow_tags,
+                    last_audio_opening=str(meta.get("last_audio_opening") or ""),
+                )
+                logger.info("tts spoken=%r allow_tags=%s", spoken[:160], allow_tags)
+                mp3 = await self.tts.synthesize(spoken)
+                audio, fmt = to_whatsapp_voice(mp3)
+                # OGG já é nota de voz → encoding do env; MP3 fallback força re-encode PTT
+                encoding = True if fmt == "mp3" else self.settings.evolution_audio_encoding
                 record_ms = self._typing_ms(spoken)
                 await self._human_preamble(
                     phone,
@@ -429,17 +458,10 @@ class Orchestrator:
                     presence="recording",
                     activity_ms=record_ms,
                 )
-                await self.evo.send_audio(phone, audio, delay_ms=0)
+                await self.evo.send_audio(phone, audio, delay_ms=0, encoding=encoding)
+                meta["last_audio_opening"] = extract_audio_opening(spoken)
+                self.memory.set_meta(phone, meta)
                 self._remember_outbound_mode(phone, used_audio=True)
-                if "http" in reply:
-                    links = "\n".join(l for l in reply.splitlines() if "http" in l)
-                    await asyncio.sleep(random.uniform(1.2, 2.0))
-                    await self.evo.send_presence(phone, delay_ms=1800, presence="composing")
-                    await self.evo.send_text(
-                        phone,
-                        "Te mando o link por escrito também:\n" + links,
-                        delay_ms=0,
-                    )
                 return reply
             except Exception:
                 logger.exception("falha TTS; caindo para texto")

@@ -13,6 +13,7 @@ Presence = Literal["composing", "recording", "paused", "available"]
 
 class EvolutionClient:
     def __init__(self, settings: Settings):
+        self.settings = settings
         self.base = settings.evolution_base_url.rstrip("/")
         self.api_key = settings.evolution_api_key
         self.instance = settings.evolution_instance
@@ -89,15 +90,23 @@ class EvolutionClient:
                 resp.raise_for_status()
             return resp.json()
 
-    async def send_audio(self, phone: str, audio_bytes: bytes, delay_ms: int = 0) -> dict:
-        """Envia áudio (mp3/ogg) como mensagem de voz."""
+    async def send_audio(
+        self,
+        phone: str,
+        audio_bytes: bytes,
+        delay_ms: int = 0,
+        *,
+        encoding: bool | None = None,
+    ) -> dict:
+        """Envia áudio (mp3/ogg) como nota de voz (PTT) via sendWhatsAppAudio."""
         url = f"{self.base}/message/sendWhatsAppAudio/{self.instance}"
         b64 = base64.b64encode(audio_bytes).decode("ascii")
+        enc = self.settings.evolution_audio_encoding if encoding is None else encoding
         payload = {
             "number": self._number(phone),
             "audio": b64,
             "delay": max(0, delay_ms),
-            "encoding": True,
+            "encoding": bool(enc),
         }
         async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(url, headers=self._headers(), json=payload)
