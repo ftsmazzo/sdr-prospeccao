@@ -65,6 +65,18 @@ class ConversationMemory:
             self._meta = {}
         self._meta[phone] = meta
 
+    def replace_history(self, phone: str, history: list[dict[str, str]]) -> None:
+        """Substitui o histórico completo (admin / rewind)."""
+        trimmed = list(history)[-self._max_messages :]
+        if self._redis:
+            self._redis.setex(
+                self._key(phone),
+                self._ttl,
+                json.dumps(trimmed, ensure_ascii=False),
+            )
+            return
+        self._local[phone] = trimmed
+
     def clear(self, phone: str) -> bool:
         """Apaga histórico e meta de um telefone."""
         found = False

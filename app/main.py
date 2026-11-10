@@ -281,6 +281,113 @@ async def reset_lead_etapa(phone: str, request: Request):
     }
 
 
+@app.post("/admin/leads/{phone}/rewind")
+async def rewind_lead(phone: str, request: Request):
+    """Corta o histórico a partir de um trecho e restaura etapa (ex.: matriculado).
+
+    Body JSON:
+      needle: texto a achar na 1ª msg (default \"esposa\")
+      etapa: etapa destino (default \"matriculado\")
+    Mantém matriculas[] / full_name / cpf. Limpa flags de aluno terceiro.
+    Header: X-Admin-Secret.
+    """
+    if not _admin_authorized(request):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+
+    from app.lead_state import ETAPAS, ensure_lead_state
+    from app.memory import ConversationMemory
+
+    settings = get_settings()
+    digits = phone.replace("+", "").replace(" ", "").replace("-", "")
+    needle = str(body.get("needle") or "esposa").strip().casefold()
+    etapa = str(body.get("etapa") or "matriculado").strip()
+    if etapa not in ETAPAS:
+        return JSONResponse(
+            {"ok": False, "error": "etapa_invalida", "allowed": list(ETAPAS)},
+            status_code=400,
+        )
+    if not needle:
+        return JSONResponse({"ok": False, "error": "needle_vazio"}, status_code=400)
+
+    memory = ConversationMemory(settings)
+    history = memory.get_history(digits)
+    cut_at = None
+    for i, msg in enumerate(history):
+        if needle in str(msg.get("content") or "").casefold():
+            cut_at = i
+            break
+    if cut_at is None:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "needle_nao_encontrado",
+                "phone": digits,
+                "history_len": len(history),
+            },
+            status_code=404,
+        )
+
+    kept = history[:cut_at]
+    memory.replace_history(digits, kept)
+
+    meta = memory.get_meta(digits)
+    ls = ensure_lead_state(meta)
+    matriculas = list(meta.get("matriculas") or [])
+    enrolled_course = None
+    for item in matriculas:
+        if isinstance(item, dict) and item.get("curso"):
+            enrolled_course = str(item["curso"])
+            break
+    if not enrolled_course and meta.get("course"):
+        enrolled_course = str(meta["course"])
+        if not matriculas:
+            matriculas = [
+                {
+                    "curso": enrolled_course,
+                    "aluno_nome": meta.get("full_name") or ls.get("nome"),
+                    "status": "confirmada",
+                }
+            ]
+            meta["matriculas"] = matriculas
+
+    ls["aluno_e_terceiro"] = False
+    ls["aluno_nome"] = None
+    ls["aluno_relacao"] = None
+    ls["aluno_genero"] = None
+    ls["curso_recomendado"] = enrolled_course
+    ls["curso_escolhido"] = enrolled_course
+    ls["curso_alternativo"] = None
+    ls["aceite_matricula"] = bool(enrolled_course)
+    ls["proximo_passo"] = None
+    ls["objecao_ativa"] = None
+    meta["lead_state"] = ls
+    meta["etapa"] = etapa
+    meta["pending_contract"] = False
+    meta["contract_sent"] = False
+    meta.pop("pending_offer", None)
+    meta.pop("_reopen_purchase", None)
+    meta["stock_streak"] = 0
+    memory.set_meta(digits, meta)
+
+    return {
+        "ok": True,
+        "phone": digits,
+        "cut_at": cut_at,
+        "history_before": len(history),
+        "history_after": len(kept),
+        "etapa": meta.get("etapa"),
+        "matriculas": meta.get("matriculas") or [],
+        "aluno_e_terceiro": False,
+        "curso_escolhido": ls.get("curso_escolhido"),
+    }
+
+
 @app.post("/admin/reset-memory")
 async def reset_memory(request: Request):
     """Limpa histórico Redis + follow-ups. Header: X-Admin-Secret."""
