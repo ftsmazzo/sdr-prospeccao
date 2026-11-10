@@ -118,15 +118,32 @@ def negociacao_block_for_prompt(meta: dict[str, Any], ls: dict[str, Any]) -> str
 
 
 def exit_handoff_to_negociacao(meta: dict[str, Any]) -> str:
-    """Sai do handoff para retomar venda com gordura de desconto."""
+    """Sai do handoff para retomar venda com gordura de desconto.
+
+    Só opera em `handoff_humano`. Recusa etapas terminais (matriculado/fechamento…).
+    """
+    etapa = meta.get("etapa") or ""
+    if etapa in ("matriculado", "fechamento", "aluno_atual", "nao_elegivel"):
+        raise ValueError(f"etapa_protegida:{etapa}")
+    if etapa != "handoff_humano":
+        raise ValueError(f"nao_em_handoff:{etapa or 'vazia'}")
     prev = meta.get("etapa_antes_handoff") or "objecao"
-    if prev in ("handoff_humano", "esfriou", "matriculado"):
+    if prev in (
+        "handoff_humano",
+        "esfriou",
+        "matriculado",
+        "fechamento",
+        "aluno_atual",
+        "nao_elegivel",
+    ):
         prev = "objecao"
     meta["etapa"] = prev
     meta.pop("handoff_reason", None)
+    meta.pop("handoff_request_id", None)
+    meta["handoff_avisado"] = False
+    meta["handoff_registrado"] = False
     meta["comercial_retorno"] = True
     meta["retomadas_paused"] = False
-    meta["handoff_avisado"] = False
     # Já passou pela tabela (10%); próxima pedida sobe na escada.
     if int(meta.get("desconto_negociacao_nivel") or 0) < 1:
         meta["desconto_negociacao_nivel"] = 1
@@ -136,6 +153,9 @@ def exit_handoff_to_negociacao(meta: dict[str, Any]) -> str:
     if ls:
         ls["objecao_ativa"] = "preco"
         ls["aceite_matricula"] = False
+        ls["pediu_desconto_ou_condicao"] = False
+        ls["duvida_juridica"] = False
+        ls["lead_irritado"] = False
         meta["lead_state"] = ls
     meta["objecoes_sem_avanco"] = 0
     return prev

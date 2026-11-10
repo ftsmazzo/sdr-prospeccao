@@ -64,20 +64,49 @@ def test_advance_second_discount_not_handoff(monkeypatch):
 
 def test_exit_handoff_miriely_style():
     meta: dict = {
-        "etapa": "handoff_humano",
         "handoff_reason": "desconto_insistencia",
         "etapa_antes_handoff": "objecao",
         "desconto_respondido": True,
         "retomadas_paused": True,
+        "handoff_registrado": True,
+        "handoff_avisado": True,
+        "handoff_request_id": "abc",
     }
     ls = ensure_lead_state(meta)
     ls["nome"] = "Miriely"
     ls["curso_escolhido"] = "Gestão de Equipes e Gestão da Produção"
     meta["lead_state"] = ls
+    meta["etapa"] = "handoff_humano"
     etapa = exit_handoff_to_negociacao(meta)
     assert etapa == "objecao"
     assert meta.get("etapa") == "objecao"
     assert meta.get("comercial_retorno") is True
     assert meta.get("handoff_reason") is None
     assert meta.get("retomadas_paused") is False
+    assert meta.get("handoff_registrado") is False
+    assert meta.get("handoff_avisado") is False
+    assert "handoff_request_id" not in meta
     assert int(meta.get("desconto_negociacao_nivel") or 0) >= 1
+
+
+def test_exit_handoff_rejects_matriculado():
+    meta: dict = {
+        "etapa": "matriculado",
+        "etapa_antes_handoff": "objecao",
+        "handoff_reason": "desconto_insistencia",
+    }
+    try:
+        exit_handoff_to_negociacao(meta)
+        raise AssertionError("deveria recusar matriculado")
+    except ValueError as exc:
+        assert "etapa_protegida" in str(exc)
+    assert meta["etapa"] == "matriculado"
+
+
+def test_exit_handoff_rejects_not_in_handoff():
+    meta: dict = {"etapa": "objecao"}
+    try:
+        exit_handoff_to_negociacao(meta)
+        raise AssertionError("deveria recusar fora de handoff")
+    except ValueError as exc:
+        assert "nao_em_handoff" in str(exc)

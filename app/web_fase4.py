@@ -91,7 +91,18 @@ def register_fase4_routes(app: FastAPI, *, admin_authorized) -> None:
         meta = mem.get_meta(digits)
         if not meta:
             return JSONResponse({"ok": False, "error": "lead_nao_encontrado"}, status_code=404)
-        etapa = exit_handoff_to_negociacao(meta)
+        try:
+            etapa = exit_handoff_to_negociacao(meta)
+        except ValueError as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "etapa": meta.get("etapa"),
+                    "handoff_reason": meta.get("handoff_reason"),
+                },
+                status_code=409,
+            )
         sched = get_scheduler()
         cancel_retomadas(digits, sched)
         # Retomada em ~10s (demo): sem oferecer desconto de cara.
