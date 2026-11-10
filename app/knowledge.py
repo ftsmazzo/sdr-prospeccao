@@ -1,7 +1,7 @@
-from functools import lru_cache
-from pathlib import Path
 import logging
 import re
+from functools import lru_cache
+from pathlib import Path
 
 from app.config import get_settings
 
@@ -75,6 +75,20 @@ def load_cursos() -> str:
             "Nunca invente nome, carga horária ou duração."
         )
     return _sanitize_for_model(path.read_text(encoding="utf-8"), "cursos")
+
+
+@lru_cache
+def load_precos() -> str:
+    path = _resolve(
+        "prompts/precos.md",
+        Path(__file__).resolve().parent.parent / "prompts" / "precos.md",
+    )
+    if not path:
+        return (
+            "Mensalidade: use a tabela de valores por carga horária. "
+            "Sem curso definido: a partir de R$ 69,90."
+        )
+    return _sanitize_for_model(path.read_text(encoding="utf-8"), "precos")
 
 
 @lru_cache

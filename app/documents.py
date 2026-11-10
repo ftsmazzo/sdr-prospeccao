@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.pricing import amount_label_for_course, price_for_course
+
 
 def build_contrato_pdf(
     *,
@@ -15,6 +17,15 @@ def build_contrato_pdf(
     cpf_line = cpf.strip() or "a confirmar"
     nasc = birth_date.strip() or "a confirmar"
     agent = (agent_name or "Edu").strip() or "Edu"
+    band = price_for_course(course)
+    if band:
+        mensalidade = (
+            f"Mensalidade (demo): {band.monthly_label} "
+            f"| 18x {band.total_18_label} "
+            f"| a vista {band.a_vista_label}"
+        )
+    else:
+        mensalidade = f"Mensalidade (demo): {amount_label_for_course(course)}"
     lines = [
         "FAVENI POLO CATANDUVA — DOCUMENTO DEMO",
         "Contrato / Informativo de Matricula (simulacao)",
@@ -24,7 +35,8 @@ def build_contrato_pdf(
         f"Data de nascimento: {nasc}",
         f"Curso: {course}",
         "Modalidade: EAD",
-        "Mensalidade referencia (demo): a partir de R$ 69,90",
+        mensalidade,
+        "Sem taxa de matricula. Primeira mensalidade na confirmacao.",
         "",
         "Documentos complementares (RG/CNH, diploma ou declaracao,",
         "historico e certidao) podem ser entregues depois da confirmacao.",

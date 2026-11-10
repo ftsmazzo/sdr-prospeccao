@@ -21,6 +21,30 @@ _PERSONAL_DATA_RE = re.compile(
     r")\b"
 )
 
+# Pedido ativo de dados (≠ só mencionar CPF/documentos na explicação).
+# Verbo + objeto próximo (sem .{0,50} solto — evita "envia diploma… CPF").
+_REQUEST_PERSONAL_DATA_RE = re.compile(
+    r"(?i)"
+    r"(?:"
+    r"(?:me\s+)?(?:passa|passe|manda|mande|envie|envia|confirma|informe|informa|digite|diga)\s+"
+    r"(?:(?:me\s+)?(?:o|a|seu|sua|esses|essas|os|as)\s+)*"
+    r"(?:cpf|c\s*\.?\s*p\s*\.?\s*f|nome\s+completo|data\s+de\s+nascimento|data\s+nasc|dados(?:\s+pessoais)?)"
+    r"|"
+    r"\b(?:preciso|necessito)\s+(?:(?:do|de|que\s+voc[eê]\s+(?:me\s+)?"
+    r"(?:passe|mande|envie)\s+))?(?:seu\s+)?"
+    r"(?:cpf|c\s*\.?\s*p\s*\.?\s*f|nome\s+completo|data\s+de\s+nascimento|dados)"
+    r"|"
+    r"\bqual(?:\s+[eé])?\s+(?:o\s+)?(?:seu\s+)?cpf\b"
+    r"|"
+    r"\bme\s+envia(?:r)?\s+(?:seu\s+)?(?:nome\s+completo|cpf|data)"
+    r"|"
+    r"\bpode\s+me\s+passar\s+(?:esses\s+)?dados\b"
+    r"|"
+    r"\b(?:cpf|nome\s+completo|data\s+de\s+nascimento)\b"
+    r".{0,20}?\b(?:por\s+favor|pra\s+(?:eu|mim)|para\s+(?:eu|mim))\b"
+    r")"
+)
+
 _LINK_RE = re.compile(r"https?://", re.IGNORECASE)
 
 
@@ -74,7 +98,34 @@ Saída: apenas o texto a ser falado (pode incluir as tags permitidas).
 
 
 def asks_or_confirms_personal_data(text: str) -> bool:
+    """True se o texto menciona CPF/nome completo/nascimento (ex.: TTS)."""
     return bool(_PERSONAL_DATA_RE.search(text or ""))
+
+
+def requests_personal_data(text: str) -> bool:
+    """True só se a agente PEDIR dados pessoais agora (não basta mencionar).
+
+    Lista de documentos (diploma, histórico, RG) e explicações do tipo
+    "na hora de fechar você envia os dados" NÃO disparam.
+    """
+    raw = text or ""
+    if not _PERSONAL_DATA_RE.search(raw) and not re.search(
+        r"(?i)\bdados\s+(?:pessoais|completos)\b", raw
+    ):
+        return False
+    # Pedido explícito
+    if _REQUEST_PERSONAL_DATA_RE.search(raw):
+        return True
+    # "nome completo, CPF e data de nascimento" em tom de coleta
+    if re.search(
+        r"(?i)nome\s+completo.{0,40}cpf.{0,40}(?:data\s+de\s+nascimento|nascimento)",
+        raw,
+    ) and re.search(
+        r"(?i)\b(?:manda|envie|passa|preciso|me\s+passa|pode\s+me|formalizar|preencher)\b",
+        raw,
+    ):
+        return True
+    return False
 
 
 def contains_link(text: str) -> bool:

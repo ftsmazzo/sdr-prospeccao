@@ -72,9 +72,17 @@ async def _amain(args: argparse.Namespace) -> int:
 
     personas = _load_personas()
     if args.persona:
-        personas = [p for p in personas if p.get("id") == args.persona]
-        if not personas:
-            raise SystemExit(f"Persona não encontrada: {args.persona}")
+        wanted: list[str] = []
+        for chunk in args.persona:
+            wanted.extend(x.strip() for x in str(chunk).split(",") if x.strip())
+        wanted_set = set(wanted)
+        personas = [p for p in personas if p.get("id") in wanted_set]
+        missing = wanted_set - {p.get("id") for p in personas}
+        if missing:
+            raise SystemExit(f"Persona(s) não encontrada(s): {', '.join(sorted(missing))}")
+        # preserva ordem pedida
+        order = {pid: i for i, pid in enumerate(wanted)}
+        personas.sort(key=lambda p: order.get(str(p.get("id")), 999))
 
     agent_model = settings.openrouter_model
     lead_model = os.environ.get("SIM_LEAD_MODEL", "openai/gpt-4.1-mini")
@@ -119,7 +127,11 @@ async def _amain(args: argparse.Namespace) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Simulação de leads Edu SDR")
-    parser.add_argument("--persona", help="id da persona (ex.: enfermeira_estetica_tempo)")
+    parser.add_argument(
+        "--persona",
+        action="append",
+        help="id da persona (repetível ou lista separada por vírgula)",
+    )
     parser.add_argument("--all", action="store_true", help="roda todas as personas")
     parser.add_argument("--yes", action="store_true", help="pula confirmação de custo")
     args = parser.parse_args()

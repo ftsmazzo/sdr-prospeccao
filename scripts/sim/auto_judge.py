@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from app.lead_state import reply_looks_like_promise
-from app.speech import asks_or_confirms_personal_data
+from app.pricing import allowed_money_amounts
+from app.speech import requests_personal_data
 
-_PRICE_RE = re.compile(r"R\$\s*([\d.]+,\d{2}|\d+)", re.IGNORECASE)
+_PRICE_RE = re.compile(r"R\$\s*([\d.]+,\d{2})", re.IGNORECASE)
 _COURSE_LINE_RE = re.compile(r"^-\s*(.+?)\s*[—–-]\s*(\d+)\s*h", re.MULTILINE)
 _URGENCY = (
     "últimas vagas",
@@ -91,7 +92,90 @@ def _normalize(s: str) -> str:
     return re.sub(r"\s+", " ", s.casefold()).strip()
 
 
-def _find_unknown_courses(reply: str, catalog: list[tuple[str, int]]) -> list[str]:
+# Áreas / rótulos genéricos — não são nome de curso do catálogo.
+_GENERIC_COURSE_LABELS = {
+    "saúde",
+    "saude",
+    "enfermagem",
+    "educação",
+    "educacao",
+    "pedagogia",
+    "negócios",
+    "negocios",
+    "direito",
+    "tecnologia",
+    "bem-estar",
+    "bem estar",
+    "graduação",
+    "graduacao",
+    "capacitação",
+    "capacitacao",
+    "pós",
+    "pos",
+    "especialização",
+    "especializacao",
+    "área da saúde",
+    "area da saude",
+    "área de saúde",
+    "area de saude",
+}
+
+_DENIAL_RE = re.compile(
+    r"(?:"
+    r"n[aã]o\s+(?:temos|est[aá]|consta|oferecemos|disponibilizamos)|"
+    r"n[aã]o\s+est[aá]\s+(?:no|na)\s+(?:cat[aá]logo|lista)|"
+    r"fora\s+do\s+cat[aá]logo|"
+    r"n[aã]o\s+temos\s+na\s+lista|"
+    r"n[aã]o\s+faz\s+parte\s+do\s+cat[aá]logo"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _trim_course_capture(raw: str) -> str:
+    """Corta o nome capturado em conectores/frases (evita engolir a sentença)."""
+    cut = re.split(
+        r"\s+(?:n[aã]o|nao|mas|por[eé]m|para|pra|que|com|,|;|:)\s+",
+        raw or "",
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    words = cut.strip().split()
+    if len(words) > 8:
+        cut = " ".join(words[:8])
+    return cut.strip(" .,;:?!-–—")
+
+
+def _is_generic_course_label(raw: str) -> bool:
+    nr = _normalize(raw)
+    if not nr:
+        return True
+    if nr in _GENERIC_COURSE_LABELS:
+        return True
+    first = nr.split()[0]
+    return bool(first in _GENERIC_COURSE_LABELS and len(nr.split()) <= 4)
+
+
+def _lead_mentioned_course(lead_text: str, course_raw: str) -> bool:
+    lead_n = _normalize(lead_text)
+    course_n = _normalize(course_raw)
+    if not lead_n or not course_n:
+        return False
+    if course_n in lead_n:
+        return True
+    # tokens significativos (ex.: UTI, terapia intensiva)
+    for tok in course_n.split()[:3]:
+        if len(tok) >= 3 and re.search(rf"\b{re.escape(tok)}\b", lead_n):
+            return True
+    return bool(len(course_n) <= 4 and re.search(rf"\b{re.escape(course_n)}\b", lead_n))
+
+
+def _find_unknown_courses(
+    reply: str,
+    catalog: list[tuple[str, int]],
+    *,
+    lead_text: str = "",
+) -> list[str]:
     """Heurística: detecta 'pós em X' / 'especialização em X' / nomes longos que não estão no catálogo."""
     known = {_normalize(n) for n, _ in catalog}
     # aliases curtos do catálogo (última parte significativa)
@@ -101,6 +185,7 @@ def _find_unknown_courses(reply: str, catalog: list[tuple[str, int]]) -> list[st
             if len(part) >= 8:
                 known.add(_normalize(part))
 
+    reply_denies = bool(_DENIAL_RE.search(reply or ""))
     hits: list[str] = []
     patterns = [
         r"(?:p[oó]s(?:-gradua[cç][aã]o)?|especializa[cç][aã]o)\s+em\s+([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s,/]{3,80})",
@@ -114,23 +199,28 @@ def _find_unknown_courses(reply: str, catalog: list[tuple[str, int]]) -> list[st
     for pat in patterns:
         for m in re.finditer(pat, reply, flags=re.IGNORECASE):
             raw = m.group(1).strip(" .,;:?!")
-            # corta em pontuação de frase
+            # corta em pontuação de frase e conectores
             raw = re.split(r"[.?!\n]", raw)[0].strip()
+            raw = _trim_course_capture(raw)
             if len(raw) < 3:
                 continue
-            # genéricos ok
-            if _normalize(raw) in ("graduação", "graduacao", "capacitação", "capacitacao"):
+            if _is_generic_course_label(raw):
                 continue
-            # UTI / fora do catálogo
-            if _normalize(raw) in ("uti", "terapia intensiva") or "uti" in _normalize(raw):
-                if not any("uti" in k for k in known):
-                    hits.append(raw)
-                    continue
-            # match se algum known contém ou é contido
+            # Lead pediu o curso e a agente está negando a oferta → não é inventário falso.
+            if reply_denies and _lead_mentioned_course(lead_text, raw):
+                continue
+            # UTI / fora do catálogo (não confundir com "institucional")
             nr = _normalize(raw)
+            if nr in ("uti", "terapia intensiva") or re.search(r"\buti\b", nr):
+                known_has_uti = any(re.search(r"\buti\b", k) for k in known)
+                if (not known_has_uti) and not (
+                    reply_denies and _lead_mentioned_course(lead_text, raw)
+                ):
+                    hits.append("UTI" if re.search(r"\buti\b", nr) else raw)
+                continue
+            # match se algum known contém ou é contido
             if any(nr in k or k in nr for k in known if len(k) >= 6):
                 continue
-            # se citou nome quase igual a um do catálogo, ok
             hits.append(raw)
     # dedupe
     seen: set[str] = set()
@@ -163,10 +253,12 @@ def judge_agent_reply(
         add("sem_pergunta_nem_proximo_passo", "(resposta vazia)")
         return violations
 
-    # preço: só 69,90 é permitido
+    # preço: somente valores da tabela prompts/precos.md
+    allowed = allowed_money_amounts()
     for m in _PRICE_RE.finditer(text):
-        if not re.search(r"69\s*[,.]\s*90", m.group(0)):
-            add("preco_diferente_69_90", m.group(0))
+        amount = m.group(1).strip()
+        if amount not in allowed:
+            add("preco_fora_tabela", m.group(0))
 
     # perguntas: resposta inteira
     q_count = text.count("?")
@@ -179,7 +271,7 @@ def judge_agent_reply(
     if q_count == 0 and not has_next and not lead_farewell:
         add("sem_pergunta_nem_proximo_passo", text[:120])
 
-    if asks_or_confirms_personal_data(text) and not aceite_matricula:
+    if requests_personal_data(text) and not aceite_matricula:
         add("cpf_antes_de_aceite", text[:120])
 
     if reply_looks_like_promise(text) and not action_executed:
@@ -205,18 +297,20 @@ def judge_agent_reply(
                 continue
             short = name.split("—")[0].split("–")[0].strip().casefold()
             token = short.split()[0]
-            if len(token) >= 5 and token in low and short.split()[0] in low:
-                # if any long course keyword present
-                if any(w in low for w in short.split()[:2]):
-                    add("seis_meses_curso_1000h", f"{name} ({hours}h)")
-                    break
+            if (
+                len(token) >= 5
+                and token in low
+                and any(w in low for w in short.split()[:2])
+            ):
+                add("seis_meses_curso_1000h", f"{name} ({hours}h)")
+                break
 
     if "[chuckles]" in text or "[thoughtful]" in text:
         add("tag_audio_no_texto", text[:80])
     if '"reply"' in text or "```" in text or text.strip().startswith("{"):
         add("json_no_texto", text[:80])
 
-    for bad in _find_unknown_courses(text, catalog):
+    for bad in _find_unknown_courses(text, catalog, lead_text=lead_text):
         add("curso_fora_catalogo", bad)
 
     return violations

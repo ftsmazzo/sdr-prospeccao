@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.knowledge import load_conhecimento_lead, load_cursos, load_regras
+from app.knowledge import load_conhecimento_lead, load_cursos, load_precos, load_regras
 
 _ETAPAS_SEM_CATALOGO = frozenset({"aluno_atual", "nao_elegivel"})
 
@@ -96,6 +96,8 @@ def build_system_prompt(
         catalogo = (
             "## Catálogo de cursos\n"
             f"{load_cursos()}\n\n"
+            "## Tabela de valores\n"
+            f"{load_precos()}\n\n"
         )
     state_view = {
         **lead_state,

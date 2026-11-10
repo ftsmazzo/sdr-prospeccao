@@ -53,10 +53,17 @@ def test_promessa_lembrete_fiscal():
     assert any(x["regra"] == "promessa_sem_acao" for x in v)
 
 
-def test_preco_errado():
+def test_preco_fora_tabela():
     reply = "Temos por R$ 49,90. Quer seguir?"
     v = judge_agent_reply(reply, turno=3, aceite_matricula=False, action_executed=False)
-    assert any(x["regra"] == "preco_diferente_69_90" for x in v)
+    assert any(x["regra"] == "preco_fora_tabela" for x in v)
+
+
+def test_precos_tabela_ok():
+    for price in ("R$ 69,90", "R$ 79,90", "R$ 89,90", "R$ 1.294,38"):
+        reply = f"A mensalidade é {price}. Quer seguir?"
+        v = judge_agent_reply(reply, turno=3, aceite_matricula=False, action_executed=False)
+        assert not any(x["regra"] == "preco_fora_tabela" for x in v), price
 
 
 def test_cpf_antes_aceite():
@@ -65,10 +72,44 @@ def test_cpf_antes_aceite():
     assert any(x["regra"] == "cpf_antes_de_aceite" for x in v)
 
 
+def test_mencionar_cpf_sem_pedir_nao_viola():
+    reply = (
+        "Na matrícula você envia diploma e o CPF entra no contrato. "
+        "Qual área te interessa?"
+    )
+    v = judge_agent_reply(reply, turno=4, aceite_matricula=False, action_executed=False)
+    assert not any(x["regra"] == "cpf_antes_de_aceite" for x in v)
+
+
 def test_curso_uti_fora_catalogo():
     reply = "Temos pós em UTI sim. Quer saber mais?"
     v = judge_agent_reply(reply, turno=1, aceite_matricula=False, action_executed=False)
     assert any(x["regra"] == "curso_fora_catalogo" for x in v)
+
+
+def test_curso_uti_negado_pelo_lead_nao_viola():
+    lead = "Quero pós em UTI, vocês têm?"
+    reply = (
+        "A pós em UTI não está no catálogo oficial do polo. "
+        "Se quiser, posso te apresentar outras opções na área da saúde. Quer que eu faça isso?"
+    )
+    v = judge_agent_reply(
+        reply,
+        turno=3,
+        aceite_matricula=False,
+        action_executed=False,
+        lead_text=lead,
+    )
+    assert not any(x["regra"] == "curso_fora_catalogo" for x in v)
+
+
+def test_area_generica_nao_e_curso():
+    reply = "Quer que eu te mostre as opções de pós em saúde para você já ir se planejando?"
+    v = judge_agent_reply(reply, turno=5, aceite_matricula=False, action_executed=False)
+    assert not any(x["regra"] == "curso_fora_catalogo" for x in v)
+    reply2 = "Temos especialização em enfermagem na área; quer que eu te diga o nome exato do catálogo?"
+    v2 = judge_agent_reply(reply2, turno=6, aceite_matricula=False, action_executed=False)
+    assert not any(x["regra"] == "curso_fora_catalogo" for x in v2)
 
 
 def test_tag_audio():

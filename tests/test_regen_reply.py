@@ -118,6 +118,16 @@ def test_reply_needs_regen_promessa_e_cpf():
         )
         == "dados_antes_fechamento"
     )
+    assert (
+        orch._reply_needs_regen(
+            "Na matrícula você envia diploma e o CPF entra no contrato. Qual área te interessa?",
+            meta,
+            delivery_ran=False,
+            blocked_promise_reason=None,
+            last_assistant="",
+        )
+        is None
+    )
     meta_fech = {"etapa": "fechamento", "lead_state": {}}
     assert (
         orch._reply_needs_regen(
@@ -195,6 +205,53 @@ def test_finalize_stock_nao_repete():
     )
     assert out != first_stock
     assert meta["last_stock_reply"] == out
+
+
+def test_dois_stocks_seguidos_handoff_loop_stock():
+    orch = _orch()
+    phone = "sim:t-loop"
+    meta = {
+        "etapa": "recomendacao",
+        "lead_state": {"curso_escolhido": None, "aceite_matricula": False},
+        "stock_streak": 0,
+    }
+    orch.memory.set_meta(phone, meta)
+    orch._call_agent_json = AsyncMock(  # type: ignore[method-assign]
+        return_value=AgentResponse(
+            reply="Já te mando o link do contrato",
+            state_update={},
+            action=None,
+            action_data={},
+        )
+    )
+    out1 = asyncio.run(
+        orch._finalize_reply(
+            phone=phone,
+            meta=meta,
+            messages=[{"role": "user", "content": "contrato"}],
+            reply="Vou preparar seu contrato agora",
+            course=None,
+            blocked_promise_reason="promessa_sem_acao",
+            delivery_ran=False,
+        )
+    )
+    assert meta.get("etapa") != "handoff_humano"
+    assert int(meta.get("stock_streak") or 0) == 1
+    assert "especialista" not in out1.casefold()
+    out2 = asyncio.run(
+        orch._finalize_reply(
+            phone=phone,
+            meta=meta,
+            messages=[{"role": "user", "content": "manda"}],
+            reply="Vou preparar seu contrato agora",
+            course=None,
+            blocked_promise_reason="promessa_sem_acao",
+            delivery_ran=False,
+        )
+    )
+    assert meta.get("etapa") == "handoff_humano"
+    assert meta.get("handoff_reason") == "loop_stock"
+    assert "especialista" in out2.casefold()
 
 
 def test_quase_igual_dispara_regen():

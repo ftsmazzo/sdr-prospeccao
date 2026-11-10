@@ -1,6 +1,8 @@
 import secrets
 from dataclasses import dataclass
 
+from app.pricing import amount_label_for_course
+
 
 @dataclass
 class CheckoutSession:
@@ -20,14 +22,15 @@ def create_checkout(
     *,
     course_label: str = "Pós-Graduação EAD Faveni",
     lead_name: str = "",
-    amount_label: str = "a partir de R$ 69,90",
+    amount_label: str | None = None,
 ) -> CheckoutSession:
     token = secrets.token_urlsafe(16)
+    label = amount_label if amount_label is not None else amount_label_for_course(course_label)
     session = CheckoutSession(
         token=token,
         phone=phone,
         course_label=course_label,
-        amount_label=amount_label,
+        amount_label=label,
         lead_name=lead_name,
     )
     _SESSIONS[token] = session

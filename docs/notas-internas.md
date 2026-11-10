@@ -14,10 +14,16 @@
 - Referência histórica do site: **(17) 98819-6906**
 - Motivo de não citar: confundiria com o canal de teste do Edu.
 
+## Tabela de preços (demo)
+
+- Fonte injetada no modelo: `prompts/precos.md` (faixas por carga horária).
+- **Esta tabela é de demonstração** e deve ser substituída pela tabela real do cliente antes de produção.
+- Código de resolução: `app/pricing.py` (checkout, PDF e fiscal da sim usam a mesma fonte).
+
 ## Claims a evitar no agente
 
 - “Nota máxima no MEC” (claim de perfil LinkedIn — não usar como fato no prompt do lead).
-- Urgência/escassez inventada; desconto/bolsa não listados.
+- Urgência/escassez inventada; desconto/bolsa fora da tabela `precos.md`.
 
 ## Operação
 

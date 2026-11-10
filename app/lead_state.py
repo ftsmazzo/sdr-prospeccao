@@ -331,13 +331,18 @@ def summarize_lead(meta: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def _enter_handoff(meta: dict[str, Any], reason: str) -> str:
+def enter_handoff(meta: dict[str, Any], reason: str) -> str:
+    """Entra em handoff_humano com motivo (público para orquestrador/sim)."""
     if meta.get("etapa") != "handoff_humano":
         meta["etapa_antes_handoff"] = meta.get("etapa") or "recomendacao"
     meta["handoff_reason"] = reason
     meta["etapa"] = "handoff_humano"
     logger.info("handoff_humano reason=%s summary=%s", reason, summarize_lead(meta))
     return "handoff_humano"
+
+
+def _enter_handoff(meta: dict[str, Any], reason: str) -> str:
+    return enter_handoff(meta, reason)
 
 
 def _clear_handoff_flags(ls: dict[str, Any], meta: dict[str, Any]) -> None:
@@ -355,6 +360,17 @@ def _ensure_preco_objection(ls: dict[str, Any]) -> None:
         ls["objecoes_levantadas"] = hist
     if not ls.get("objecao_ativa"):
         ls["objecao_ativa"] = "preco"
+
+
+def _curso_no_catalogo(curso: str) -> bool:
+    if not (curso or "").strip():
+        return False
+    try:
+        from app.pricing import lookup_course_hours
+
+        return lookup_course_hours(curso) is not None
+    except Exception:
+        return False
 
 
 def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str:
@@ -468,6 +484,19 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
             if mark_desconto_respondido:
                 meta["desconto_respondido"] = True
             return meta["etapa"]
+        # Atalho: lead decidido (graduação + curso do catálogo + aceite) → fechamento.
+        if (
+            grad == "concluida"
+            and ls.get("curso_escolhido")
+            and ls.get("aceite_matricula")
+            and not ls.get("objecao_ativa")
+            and _curso_no_catalogo(str(ls.get("curso_escolhido") or ""))
+        ):
+            meta["etapa"] = "fechamento"
+            meta["objecoes_sem_avanco"] = 0
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "fechamento"
         if grad == "concluida" and ls.get("area_interesse") and ls.get("objetivo"):
             meta["etapa"] = "recomendacao"
             meta["objecoes_sem_avanco"] = 0

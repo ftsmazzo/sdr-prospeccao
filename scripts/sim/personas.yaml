@@ -12,10 +12,10 @@
   nome: Juliana
   perfil: Professora do ensino fundamental, graduada em pedagogia
   objetivo: Psicopedagogia Institucional e Clínica
-  objecao: preço
+  objecao: preço — quer mensalidade e valor à vista exatos da tabela
   estilo: formal, frases completas
-  fecha_quando: se o valor de referência fizer sentido com o objetivo
-  desiste_quando: se inventarem desconto ou forem agressivas
+  fecha_quando: se informarem R$ 79,90/mês e à vista R$ 1.294,38 (faixa 620h) com clareza
+  desiste_quando: se inventarem desconto fora da tabela, recusarem o valor exato ou forem agressivas
   primeira_mensagem: Boa tarde. Tenho interesse em Psicopedagogia.
 
 - id: sem_graduacao_autismo
@@ -113,8 +113,8 @@
   nome: Tiago
   perfil: Graduado, impaciente
   objetivo: IA para negócios
-  objecao: lead_irritado / demora
+  objecao: lead_irritado / demora — quer o valor mensal exato (R$ 79,90) sem enrolação
   estilo: mensagens picadas, tom seco
-  fecha_quando: se forem objetivas e rápidas
-  desiste_quando: se alongarem com enrolação
+  fecha_quando: se disserem R$ 79,90 na mensalidade e forem objetivas no passo a passo
+  desiste_quando: se alongarem, recusarem o valor exato ou enrolarem
   primeira_mensagem: oi

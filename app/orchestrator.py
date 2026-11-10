@@ -4,6 +4,7 @@ import random
 import re
 import time
 from difflib import SequenceMatcher
+from typing import Any
 
 from app.audio_post import to_whatsapp_voice
 from app.checkout import create_checkout
@@ -17,6 +18,7 @@ from app.lead_state import (
     advance_etapa,
     can_run_action,
     ensure_lead_state,
+    enter_handoff,
     merge_state_update,
     reply_looks_like_callback_promise,
     reply_looks_like_delivery_promise,
@@ -37,6 +39,7 @@ from app.speech import (
     asks_or_confirms_personal_data,
     contains_link,
     extract_audio_opening,
+    requests_personal_data,
     to_spoken_script,
 )
 
@@ -73,7 +76,8 @@ _REGEN_MOTIVOS = {
         "(ação de entrega indisponível neste turno). "
         "Responda ao que o lead pediu sem prometer entrega futura; "
         "se ele pediu informações ou um resumo, escreva o resumo NESTA mensagem "
-        "(curso, carga horária do catálogo, a partir de R$ 69,90, 100% online, "
+        "(curso, carga horária do catálogo, mensalidade da faixa em precos.md "
+        "ou 'a partir de R$ 69,90' se ainda não houver curso, 100% online, "
         "troca de curso em 90 dias, documentos necessários)."
     ),
     "promessa_lembrete": (
@@ -124,6 +128,8 @@ class Orchestrator:
         self.stt = SpeechToTextClient(settings)
         self.tts = ElevenLabsClient(settings)
         self.memory = ConversationMemory(settings)
+        # Diagnóstico do último _finalize_reply (sim/harness).
+        self.last_reply_diag: dict[str, Any] = {}
 
     def _idle_ms(self) -> int:
         return random.randint(self.settings.human_idle_min_ms, self.settings.human_idle_max_ms)
@@ -296,7 +302,7 @@ class Orchestrator:
             if reply_looks_like_delivery_promise(reply):
                 return "promessa_sem_acao"
         etapa = meta.get("etapa") or ""
-        if etapa != "fechamento" and asks_or_confirms_personal_data(reply):
+        if etapa != "fechamento" and requests_personal_data(reply):
             return "dados_antes_fechamento"
         if reply_has_scarcity(reply):
             return "escassez"
@@ -348,7 +354,23 @@ class Orchestrator:
         avoid = str(meta.get("last_stock_reply") or "")
         stock = rewrite_blocked_action_reply(stock_reason, reply, ls, avoid=avoid)
         meta["last_stock_reply"] = stock
-        logger.info("stock fallback reason=%s avoid_dup=%s", stock_reason, bool(avoid))
+        streak = int(meta.get("stock_streak") or 0) + 1
+        meta["stock_streak"] = streak
+        logger.info(
+            "stock fallback reason=%s avoid_dup=%s streak=%s",
+            stock_reason,
+            bool(avoid),
+            streak,
+        )
+        # Dois stocks seguidos → handoff (anti-loop).
+        if streak >= 2 and meta.get("etapa") != "handoff_humano":
+            enter_handoff(meta, "loop_stock")
+            logger.info("handoff por loop_stock phone_meta_etapa=%s", meta.get("etapa"))
+            return (
+                "Vou pedir pra um especialista do polo te ajudar a seguir daqui, "
+                "assim você não fica sem uma resposta clara. Em breve alguém retoma "
+                "com você por aqui, tá bem?"
+            )
         return stock
 
     def _apply_actions(
@@ -460,6 +482,13 @@ class Orchestrator:
         blocked_promise_reason: str | None,
         delivery_ran: bool,
     ) -> str:
+        self.last_reply_diag = {
+            "regen": False,
+            "regen_reason": None,
+            "stock": False,
+            "stock_reason": None,
+            "stock_text": None,
+        }
         last_assistant = self._last_assistant_text(phone)
         reason = self._reply_needs_regen(
             reply,
@@ -469,6 +498,8 @@ class Orchestrator:
             last_assistant=last_assistant,
         )
         if reason:
+            self.last_reply_diag["regen"] = True
+            self.last_reply_diag["regen_reason"] = reason
             logger.info("regen reply reason=%s", reason)
             regenerated = await self._regenerate_reply(messages, meta, reason)
             if regenerated:
@@ -485,10 +516,24 @@ class Orchestrator:
                     last_assistant=last_assistant,
                 )
                 if not still:
+                    meta["stock_streak"] = 0
                     return regenerated
                 logger.info("regen ainda viola (%s) — stock", still)
-                return self._apply_stock_fallback(meta, still or reason, regenerated)
-            return self._apply_stock_fallback(meta, reason, reply)
+                stock = self._apply_stock_fallback(meta, still or reason, regenerated)
+                self.last_reply_diag["stock"] = True
+                self.last_reply_diag["stock_reason"] = still or reason
+                self.last_reply_diag["stock_text"] = stock
+                if meta.get("handoff_reason") == "loop_stock":
+                    self.last_reply_diag["stock_reason"] = "loop_stock"
+                return stock
+            stock = self._apply_stock_fallback(meta, reason, reply)
+            self.last_reply_diag["stock"] = True
+            self.last_reply_diag["stock_reason"] = (
+                "loop_stock" if meta.get("handoff_reason") == "loop_stock" else reason
+            )
+            self.last_reply_diag["stock_text"] = stock
+            return stock
+        meta["stock_streak"] = 0
         return reply
 
     async def handle_inbound(

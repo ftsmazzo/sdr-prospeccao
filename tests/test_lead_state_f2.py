@@ -227,10 +227,32 @@ def test_catalogo_cursos_por_etapa():
         p = build_system_prompt(etapa=etapa, lead_state=ls, meta_flags={})
         assert marker in p, etapa
         assert "## Catálogo de cursos" in p, etapa
+        assert "## Tabela de valores" in p, etapa
+        assert "R$ 79,90" in p, etapa
     for etapa in sem_catalogo:
         p = build_system_prompt(etapa=etapa, lead_state=ls, meta_flags={})
         assert marker not in p, etapa
         assert "## Catálogo de cursos" not in p, etapa
+        assert "## Tabela de valores" not in p, etapa
+
+
+def test_atalho_lead_decidido_vai_fechamento():
+    meta = {
+        "etapa": "qualificacao",
+        "lead_state": {
+            "nome": "Ana",
+            "graduacao": "concluida",
+            "area_interesse": None,
+            "objetivo": None,
+            "curso_escolhido": "Neuropsicopedagogia",
+            "aceite_matricula": True,
+            "objecao_ativa": None,
+            "objecoes_levantadas": [],
+        },
+        "objecoes_sem_avanco": 0,
+    }
+    advance_etapa(meta)
+    assert meta["etapa"] == "fechamento"
 
 
 def test_saida_handoff_condicao_especial_com_aceite():

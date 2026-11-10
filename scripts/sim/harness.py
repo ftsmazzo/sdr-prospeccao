@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.orchestrator import Orchestrator
-
 from scripts.sim.auto_judge import judge_agent_reply, load_catalog, looks_like_farewell
 from scripts.sim.lead import LEAD_TEMPERATURE, generate_lead_message
 from scripts.sim.llm_judge import JUDGE_TEMPERATURE, judge_conversation
@@ -15,8 +14,8 @@ from scripts.sim.mocks import MockEvolution, MockScheduler
 
 
 def patch_scheduler(mock: MockScheduler) -> None:
-    import app.followups as followups
     import app.orchestrator as orch_mod
+    from app import followups
 
     followups.get_scheduler = lambda: mock  # type: ignore[assignment]
     orch_mod.get_scheduler = lambda: mock  # type: ignore[assignment]
@@ -38,6 +37,10 @@ def _is_picado(estilo: str) -> bool:
     return "picad" in (estilo or "").casefold()
 
 
+def _norm_stock(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().casefold())
+
+
 def _outcome_from_state(
     *,
     scheduled: bool,
@@ -51,7 +54,7 @@ def _outcome_from_state(
         return "fechou_followup"
     if "http" in (reply or "").casefold() and "checkout" in (reply or "").casefold():
         return "fechou_checkout"
-    if re.search(r"https?://\S*checkout", reply or "", re.I):
+    if re.search(r"https?://\S*checkout", reply or "", re.IGNORECASE):
         return "fechou_checkout"
     low = (lead_text or "").casefold()
     desiste_hints = (
@@ -96,6 +99,12 @@ async def run_persona(
     jobs_mark = 0
     farewell_streak = 0
 
+    regens: list[dict[str, Any]] = []
+    stocks: list[dict[str, Any]] = []
+    stock_repeats: list[dict[str, Any]] = []
+    prev_stock_norm: str | None = None
+    prev_stock_turno: int | None = None
+
     # limpa memória residual do phone
     orch.memory.clear(phone)
 
@@ -130,6 +139,7 @@ async def run_persona(
         ls_before = meta_before.get("lead_state") or {}
         aceite_before = bool(ls_before.get("aceite_matricula"))
 
+        orch.last_reply_diag = {}
         reply = await orch.handle_inbound(
             phone,
             lead_text,
@@ -139,10 +149,42 @@ async def run_persona(
         sent = evo.drain_texts()
         agent_text = sent or (reply or "")
 
+        diag = dict(getattr(orch, "last_reply_diag", None) or {})
+        if diag.get("regen"):
+            regens.append(
+                {
+                    "turno": turn,
+                    "motivo": diag.get("regen_reason") or "?",
+                }
+            )
+        if diag.get("stock"):
+            stock_text = str(diag.get("stock_text") or agent_text)
+            stocks.append(
+                {
+                    "turno": turn,
+                    "motivo": diag.get("stock_reason") or diag.get("regen_reason") or "?",
+                    "frase": stock_text,
+                }
+            )
+            cur_norm = _norm_stock(stock_text)
+            if prev_stock_norm and cur_norm == prev_stock_norm and prev_stock_turno is not None:
+                stock_repeats.append(
+                    {
+                        "turno": turn,
+                        "turno_anterior": prev_stock_turno,
+                        "frase": stock_text,
+                    }
+                )
+            prev_stock_norm = cur_norm
+            prev_stock_turno = turn
+        else:
+            prev_stock_norm = None
+            prev_stock_turno = None
+
         new_jobs = sched.jobs[jobs_mark:]
         jobs_mark = len(sched.jobs)
         action_executed = bool(new_jobs) or bool(
-            re.search(r"https?://\S*checkout", agent_text, re.I)
+            re.search(r"https?://\S*checkout", agent_text, re.IGNORECASE)
         )
 
         history.append({"role": "agent", "turno": turn, "text": agent_text})
@@ -191,6 +233,14 @@ async def run_persona(
         "etapa_final": meta.get("etapa"),
         "history": history,
         "violations": violations,
+        "diagnostics": {
+            "regens": regens,
+            "stocks": stocks,
+            "stock_repeats": stock_repeats,
+            "regen_count": len(regens),
+            "stock_count": len(stocks),
+            "stock_repeat_count": len(stock_repeats),
+        },
         "judge": judge,
         "scheduler_log": list(sched.log),
         "models": {

@@ -7,6 +7,7 @@ from app.speech import (
     asks_or_confirms_personal_data,
     contains_link,
     phonetize_for_tts,
+    requests_personal_data,
     sanitize_expression_tags,
     scrub_for_tts,
 )
@@ -47,6 +48,20 @@ def test_personal_data_e_link_helpers():
     assert not asks_or_confirms_personal_data("Qual área você tá pensando?")
     assert contains_link("Aqui: https://exemplo.com/x")
     assert not contains_link("Sem link aqui")
+
+
+def test_requests_personal_data_pedir_vs_mencionar():
+    assert requests_personal_data("Me manda nome completo, CPF e data de nascimento?")
+    assert requests_personal_data("Qual o seu CPF?")
+    assert not requests_personal_data(
+        "Na matrícula você envia diploma, histórico e RG; o CPF entra no contrato."
+    )
+    assert not requests_personal_data(
+        "Quando for fechar, a gente pede CPF e data de nascimento — por agora, qual área te interessa?"
+    )
+    assert asks_or_confirms_personal_data(
+        "Na matrícula você envia diploma; o CPF entra no contrato."
+    )
 
 
 def test_audio_key_hints_sem_matricul():

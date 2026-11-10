@@ -17,6 +17,9 @@ def apply_sim_env() -> None:
     os.environ["HUMAN_IDLE_MAX_MS"] = "0"
     os.environ["TYPING_MIN_MS"] = "0"
     os.environ["TYPING_MAX_MS"] = "0"
+    # Mesma identidade do deploy EasyPanel
+    os.environ["AGENT_NAME"] = "Clara"
+    os.environ["AGENT_GENDER"] = "f"
     # Evita worker de follow-up se algo importar main por acidente
     os.environ.setdefault("APP_ENV", "simulation")
 
