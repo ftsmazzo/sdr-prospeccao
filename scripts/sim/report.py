@@ -63,7 +63,7 @@ def write_reports(
     _PRICE = {
         "openai/gpt-4.1-mini": {"in": 0.40, "out": 1.60},
         "openai/gpt-4.1": {"in": 2.00, "out": 8.00},
-        "anthropic/claude-sonnet-5": {"in": 3.00, "out": 15.00},
+        "anthropic/claude-sonnet-5": {"in": 2.00, "out": 10.00},
         "anthropic/claude-sonnet-4": {"in": 3.00, "out": 15.00},
         "anthropic/claude-3.5-sonnet": {"in": 3.00, "out": 15.00},
     }
