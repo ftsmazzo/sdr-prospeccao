@@ -1243,6 +1243,16 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             logger.exception("falha ao cancelar retomadas phone=%s", phone)
 
+        # Inbox: atendimento humano — registra lead e não responde com a IA.
+        if meta.get("ai_paused"):
+            from datetime import datetime, timezone
+
+            self.memory.append(phone, "user", user_text)
+            meta["inbox_updated_at"] = datetime.now(timezone.utc).isoformat()
+            self.memory.set_meta(phone, meta)
+            logger.info("ai_paused — mensagem só registrada phone=%s", phone)
+            return ""
+
         # Opt-out explícito
         if re.search(
             r"(?i)\b("
@@ -1417,8 +1427,18 @@ class Orchestrator:
                 getattr(self.settings, "prompt_history_messages", 12) or 12
             )
             history = self.memory.get_history(phone)[-hist_limit:]
+            history_empty = not history
             messages = [build_cached_system_message(fixed, variable)]
-            if push_name and not history:
+            for h in history:
+                role = str(h.get("role") or "assistant")
+                content = str(h.get("content") or "")
+                if h.get("source") == "human" or role == "operator":
+                    role = "assistant"
+                    content = f"[Mensagem do atendente humano]\n{content}"
+                if role not in ("user", "assistant", "system"):
+                    role = "assistant"
+                messages.append({"role": role, "content": content})
+            if push_name and history_empty:
                 messages.append(
                     {
                         "role": "system",
@@ -1469,7 +1489,6 @@ class Orchestrator:
                         ),
                     }
                 )
-            messages.extend(history)
             messages.append({"role": "user", "content": user_text})
 
             agent = await self._call_agent_json(messages)

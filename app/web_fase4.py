@@ -75,6 +75,71 @@ def register_fase4_routes(app: FastAPI, *, admin_authorized) -> None:
             )
         return resp
 
+    @app.get("/admin/inbox", response_class=HTMLResponse)
+    async def inbox_view(request: Request):
+        if not admin_authorized(request):
+            return HTMLResponse(_PAINEL_LOGIN_HTML, status_code=401)
+        from app.inbox import get_conversation, list_conversations
+
+        settings = get_settings()
+        secret = (
+            request.query_params.get("secret")
+            or request.cookies.get("edu_admin_secret")
+            or ""
+        )
+        phone = "".join(ch for ch in (request.query_params.get("phone") or "") if ch.isdigit())
+        conversations = list_conversations(settings)
+        selected = get_conversation(settings, phone) if phone else None
+        if not selected and conversations:
+            selected = get_conversation(settings, conversations[0]["phone"])
+        html = _render_inbox(conversations, selected, secret)
+        resp = HTMLResponse(html)
+        if request.query_params.get("secret"):
+            resp.set_cookie(
+                "edu_admin_secret",
+                request.query_params.get("secret") or "",
+                httponly=True,
+                samesite="lax",
+            )
+        return resp
+
+    @app.post("/admin/inbox/{phone}/action")
+    async def inbox_action(phone: str, request: Request):
+        if not admin_authorized(request):
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        from app.inbox import return_to_ai, send_operator_message, transfer_to_human
+
+        settings = get_settings()
+        digits = "".join(ch for ch in phone if ch.isdigit())
+        content_type = (request.headers.get("content-type") or "").lower()
+        if "application/json" in content_type:
+            body = await request.json()
+            action = str(body.get("action") or "")
+            text = str(body.get("text") or "")
+            secret = str(body.get("secret") or request.query_params.get("secret") or "")
+        else:
+            form = await request.form()
+            action = str(form.get("action") or "")
+            text = str(form.get("text") or "")
+            secret = str(form.get("secret") or "")
+
+        if action == "to_human":
+            transfer_to_human(settings, digits)
+        elif action == "to_ai":
+            return_to_ai(settings, digits)
+        elif action == "send":
+            result = await send_operator_message(settings, digits, text)
+            if not result.get("ok"):
+                return JSONResponse(result, status_code=400)
+        else:
+            return JSONResponse({"ok": False, "error": "acao_invalida"}, status_code=400)
+
+        # Form POST → redirect; JSON → ok
+        if "application/json" in content_type:
+            return {"ok": True, "phone": digits, "action": action}
+        q = f"secret={secret}&phone={digits}" if secret else f"phone={digits}"
+        return RedirectResponse(url=f"/admin/inbox?{q}", status_code=303)
+
     @app.post("/admin/leads/{phone}/retomar-negociacao")
     async def retomar_negociacao(phone: str, request: Request):
         """Sai do handoff de desconto e agenda retomada comercial (demo)."""
@@ -501,6 +566,7 @@ th {{ color: var(--muted); font-size: .72rem; font-weight: 650; text-transform: 
       <a href="#funil">Funil</a>
       <a href="#teste">Teste / limpar</a>
       <a href="#registros">Matrículas &amp; handoffs</a>
+      <a href="/admin/inbox?secret={_esc(secret)}">Inbox</a>
       <a href="/interesse">Formulário público</a>
     </nav>
   </div>
@@ -553,6 +619,203 @@ th {{ color: var(--muted); font-size: .72rem; font-weight: 650; text-transform: 
     </section>
   </div>
 </main>
+</body>
+</html>"""
+
+
+def _render_inbox(conversations: list, selected: dict | None, secret: str) -> str:
+    rows = []
+    for c in conversations:
+        active = selected and c.get("phone") == selected.get("phone")
+        modo = c.get("modo") or "ia"
+        badge = (
+            '<span class="modo human">Humano</span>'
+            if modo == "humano"
+            else '<span class="modo ai">IA</span>'
+        )
+        rows.append(
+            f'<a class="conv {"active" if active else ""}" '
+            f'href="/admin/inbox?secret={_esc(secret)}&phone={_esc(c.get("phone"))}">'
+            f'<div class="conv-top"><strong>{_esc(c.get("nome"))}</strong>{badge}</div>'
+            f'<div class="conv-meta">{_esc(c.get("phone"))} · {_esc(c.get("etapa_label"))}</div>'
+            f'<div class="conv-preview">{_esc(c.get("preview") or "Sem mensagens")}</div>'
+            f"</a>"
+        )
+
+    bubbles = []
+    if selected:
+        for m in selected.get("messages") or []:
+            bucket = m.get("bucket") or "ai"
+            label = {"lead": "Lead", "ai": "Clara", "human": "Operador"}.get(bucket, "")
+            bubbles.append(
+                f'<div class="bubble {bucket}">'
+                f'<div class="who">{label}</div>'
+                f'<div class="txt">{_esc(m.get("content")).replace(chr(10), "<br/>")}</div>'
+                f"</div>"
+            )
+
+    phone = _esc((selected or {}).get("phone") or "")
+    nome = _esc((selected or {}).get("nome") or "Selecione uma conversa")
+    modo = (selected or {}).get("modo") or "ia"
+    curso = _esc((selected or {}).get("curso") or "—")
+    etapa = _esc((selected or {}).get("etapa_label") or "—")
+    paused = modo == "humano"
+
+    actions = ""
+    composer = ""
+    if selected:
+        actions = f"""
+        <form method="post" action="/admin/inbox/{phone}/action" class="toolbar-actions">
+          <input type="hidden" name="secret" value="{_esc(secret)}"/>
+          {"<button class='btn ai' name='action' value='to_ai' type='submit'>Devolver para IA</button>" if paused else "<button class='btn human' name='action' value='to_human' type='submit'>Transferir para humano</button>"}
+        </form>
+        """
+        composer = f"""
+        <form method="post" action="/admin/inbox/{phone}/action" class="composer" id="composer">
+          <input type="hidden" name="secret" value="{_esc(secret)}"/>
+          <input type="hidden" name="action" value="send"/>
+          <textarea name="text" rows="2" placeholder="Escrever como operador (pausa a IA automaticamente)…" required></textarea>
+          <button type="submit" class="btn primary">Enviar</button>
+        </form>
+        """
+
+    thread = (
+        "".join(bubbles)
+        if bubbles
+        else '<p class="empty-thread">Nenhuma mensagem nesta conversa ainda.</p>'
+    )
+
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>CRM · Inbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root {{
+  --bg:#f4f6f9; --surface:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+  --accent:#1d4ed8; --human:#b45309; --ai:#047857;
+  --shadow:0 1px 2px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.04);
+  --font:"IBM Plex Sans",system-ui,sans-serif;
+}}
+* {{ box-sizing:border-box; }}
+html,body {{ margin:0; height:100%; }}
+body {{
+  font-family:var(--font); color:var(--ink);
+  background:radial-gradient(900px 420px at 100% -10%, #dbeafe 0%, transparent 55%), var(--bg);
+}}
+.shell {{ max-width:1280px; margin:0 auto; padding:1rem 1.1rem 1.25rem; height:100%; display:flex; flex-direction:column; gap:.85rem; }}
+.topbar {{ display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; flex-wrap:wrap; }}
+.topbar h1 {{ margin:.1rem 0 0; font-size:1.45rem; letter-spacing:-.02em; }}
+.topbar p {{ margin:0; color:var(--muted); font-size:.9rem; }}
+.nav-pills {{ display:flex; gap:.45rem; flex-wrap:wrap; }}
+.nav-pills a {{
+  text-decoration:none; color:var(--ink); background:var(--surface); border:1px solid var(--line);
+  border-radius:999px; padding:.4rem .8rem; font-size:.84rem; font-weight:500; box-shadow:var(--shadow);
+}}
+.layout {{
+  flex:1; min-height:0; display:grid; grid-template-columns:320px 1fr; gap:.85rem;
+}}
+.panel {{
+  background:var(--surface); border:1px solid var(--line); border-radius:16px;
+  box-shadow:var(--shadow); min-height:0; display:flex; flex-direction:column;
+}}
+.list-head, .chat-head {{
+  padding:.85rem 1rem; border-bottom:1px solid var(--line);
+  display:flex; justify-content:space-between; align-items:center; gap:.75rem;
+}}
+.list-head h2, .chat-head h2 {{ margin:0; font-size:1rem; }}
+.list {{ overflow:auto; padding:.45rem; }}
+.conv {{
+  display:block; text-decoration:none; color:inherit; border:1px solid transparent;
+  border-radius:12px; padding:.7rem .75rem; margin-bottom:.35rem;
+}}
+.conv:hover {{ background:#f8fafc; }}
+.conv.active {{ background:#eff6ff; border-color:#bfdbfe; }}
+.conv-top {{ display:flex; justify-content:space-between; gap:.5rem; align-items:center; }}
+.conv-meta {{ font-size:.72rem; color:var(--muted); margin-top:.15rem; }}
+.conv-preview {{ font-size:.78rem; color:#475569; margin-top:.3rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.modo {{ font-size:.65rem; font-weight:700; border-radius:999px; padding:.12rem .4rem; text-transform:uppercase; }}
+.modo.ai {{ background:#ecfdf5; color:var(--ai); }}
+.modo.human {{ background:#fffbeb; color:var(--human); }}
+.chat-head .sub {{ color:var(--muted); font-size:.8rem; margin-top:.2rem; }}
+.thread {{
+  flex:1; overflow:auto; padding:1rem; display:flex; flex-direction:column; gap:.55rem;
+  background:linear-gradient(180deg,#f8fafc,#fff);
+}}
+.bubble {{ max-width:min(78%, 36rem); padding:.65rem .8rem; border-radius:14px; border:1px solid var(--line); }}
+.bubble .who {{ font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; margin-bottom:.25rem; color:var(--muted); }}
+.bubble .txt {{ font-size:.92rem; line-height:1.45; white-space:pre-wrap; }}
+.bubble.lead {{ align-self:flex-start; background:#fff; }}
+.bubble.ai {{ align-self:flex-end; background:#eff6ff; border-color:#bfdbfe; }}
+.bubble.human {{ align-self:flex-end; background:#fff7ed; border-color:#fed7aa; }}
+.empty-thread {{ margin:auto; color:var(--muted); }}
+.composer {{
+  border-top:1px solid var(--line); padding:.75rem; display:grid; grid-template-columns:1fr auto;
+  gap:.55rem; align-items:end;
+}}
+.composer textarea {{
+  width:100%; border:1px solid var(--line); border-radius:12px; padding:.7rem .8rem;
+  font:inherit; resize:vertical; min-height:2.8rem;
+}}
+.toolbar-actions {{ display:flex; gap:.4rem; flex-wrap:wrap; }}
+.btn {{
+  font:inherit; font-size:.8rem; font-weight:650; border-radius:10px; border:1px solid var(--line);
+  padding:.45rem .75rem; background:#fff; color:var(--ink); cursor:pointer;
+}}
+.btn.primary {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
+.btn.human {{ background:#fffbeb; color:var(--human); border-color:#fde68a; }}
+.btn.ai {{ background:#ecfdf5; color:var(--ai); border-color:#a7f3d0; }}
+.btn:focus-visible {{ outline:2px solid #93c5fd; outline-offset:1px; }}
+@media (max-width:900px) {{
+  .layout {{ grid-template-columns:1fr; }}
+  .panel.list-panel {{ max-height:38vh; }}
+}}
+::selection {{ background:#bfdbfe; }}
+</style>
+</head>
+<body>
+<main class="shell">
+  <div class="topbar">
+    <div>
+      <h1>Inbox</h1>
+      <p>Conversas WhatsApp · transferir entre Clara e humano</p>
+    </div>
+    <nav class="nav-pills">
+      <a href="/admin/painel?secret={_esc(secret)}">Funil CRM</a>
+      <a href="/admin/inbox?secret={_esc(secret)}">Inbox</a>
+      <a href="/interesse">Formulário</a>
+    </nav>
+  </div>
+
+  <div class="layout">
+    <section class="panel list-panel">
+      <div class="list-head"><h2>Conversas</h2><span class="conv-meta">{len(conversations)}</span></div>
+      <div class="list">
+        {"".join(rows) or '<p class="empty-thread" style="padding:1rem">Nenhum lead ainda.</p>'}
+      </div>
+    </section>
+
+    <section class="panel chat-panel">
+      <div class="chat-head">
+        <div>
+          <h2>{nome}</h2>
+          <div class="sub">{phone or "—"} · {etapa} · {curso}</div>
+        </div>
+        {actions}
+      </div>
+      <div class="thread" id="thread">{thread}</div>
+      {composer if selected else ""}
+    </section>
+  </div>
+</main>
+<script>
+const thread=document.getElementById('thread');
+if(thread){{ thread.scrollTop=thread.scrollHeight; }}
+{"const ta=document.querySelector('.composer textarea'); setInterval(()=>{{ if(document.visibilityState!=='visible') return; if(ta && document.activeElement===ta && ta.value.trim()) return; location.reload(); }}, 15000);" if selected else ""}
+</script>
 </body>
 </html>"""
 

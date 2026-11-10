@@ -12,11 +12,16 @@ logger = logging.getLogger("edu.memory")
 class ConversationMemory:
     """Histórico curto por telefone. Usa Redis se disponível; senão memória de processo."""
 
+    # Fallback in-process compartilhado entre instâncias (testes / Redis down).
+    _shared_local: dict[str, list[dict[str, str]]] = {}
+    _shared_meta: dict[str, dict] = {}
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self._ttl = settings.memory_ttl_seconds
         self._max_messages = settings.memory_max_messages
-        self._local: dict[str, list[dict[str, str]]] = {}
+        self._local = ConversationMemory._shared_local
+        self._meta = ConversationMemory._shared_meta
         self._redis: redis.Redis | None = None
         if settings.redis_url:
             try:
@@ -37,10 +42,21 @@ class ConversationMemory:
             return json.loads(raw)
         return list(self._local.get(phone, []))
 
-    def append(self, phone: str, role: str, content: str, max_turns: int | None = None) -> None:
+    def append(
+        self,
+        phone: str,
+        role: str,
+        content: str,
+        max_turns: int | None = None,
+        *,
+        source: str | None = None,
+    ) -> None:
         limit = max_turns if max_turns is not None else self._max_messages
         history = self.get_history(phone)
-        history.append({"role": role, "content": content})
+        msg: dict[str, str] = {"role": role, "content": content}
+        if source:
+            msg["source"] = source
+        history.append(msg)
         history = history[-limit:]
         if self._redis:
             self._redis.setex(self._key(phone), self._ttl, json.dumps(history, ensure_ascii=False))
@@ -51,7 +67,7 @@ class ConversationMemory:
         if self._redis:
             raw = self._redis.get(f"edu:meta:{phone}")
             return json.loads(raw) if raw else {}
-        return getattr(self, "_meta", {}).get(phone, {})
+        return dict(self._meta.get(phone) or {})
 
     def set_meta(self, phone: str, meta: dict[str, Any]) -> None:
         if self._redis:
@@ -61,8 +77,6 @@ class ConversationMemory:
                 json.dumps(meta, ensure_ascii=False),
             )
             return
-        if not hasattr(self, "_meta"):
-            self._meta = {}
         self._meta[phone] = meta
 
     def replace_history(self, phone: str, history: list[dict[str, str]]) -> None:
@@ -86,7 +100,7 @@ class ConversationMemory:
         if phone in self._local:
             del self._local[phone]
             found = True
-        if hasattr(self, "_meta") and phone in self._meta:
+        if phone in self._meta:
             del self._meta[phone]
             found = True
         return found
@@ -102,7 +116,6 @@ class ConversationMemory:
                 removed = int(self._redis.delete(*keys))
         removed += len(self._local)
         self._local.clear()
-        if hasattr(self, "_meta"):
-            removed += len(self._meta)
-            self._meta.clear()
+        removed += len(self._meta)
+        self._meta.clear()
         return removed
