@@ -6,6 +6,7 @@ from app.course_facts import (
     course_facts,
     min_months_for_hours,
     reply_has_wrong_course_facts,
+    stock_reply_from_facts,
 )
 from app.handoff_requests import clear_handoff_requests, list_handoff_requests, register_handoff_request
 from app.orchestrator import reply_has_scarcity
@@ -50,6 +51,17 @@ def test_correct_facts_ok():
         "mensalidade R$ 79,90."
     )
     assert reply_has_wrong_course_facts(text) is None
+
+
+def test_stock_reply_from_facts_sem_meta():
+    ls = {"curso_escolhido": "Psicopedagogia Institucional e Clínica"}
+    text = stock_reply_from_facts(ls)
+    assert text is not None
+    assert "620" in text
+    assert "79,90" in text
+    low = text.casefold()
+    for banned in ("catálogo", "catalogo", "tabela", "dados oficiais", "regras"):
+        assert banned not in low
 
 
 def test_handoff_idempotent():

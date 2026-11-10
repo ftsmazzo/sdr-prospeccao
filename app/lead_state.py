@@ -716,47 +716,52 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
     if reason == "acao_fingida":
         return [
             (
-                "Assim que o documento chegar por aqui, eu te confirmo. "
-                "Enquanto isso, o que você quer esclarecer sobre o curso?"
+                "Na nossa lista atual não tem esse item. "
+                "Quer que eu registre seu pedido para um especialista do polo "
+                "falar com você por aqui?"
             ),
             (
-                "Na nossa lista atual eu te oriento com o que temos; "
-                "um especialista pode confirmar se houver algo novo. "
-                "Qual dúvida posso tirar agora?"
-            ),
-            (
-                "Seu pedido fica registrado no sistema quando você confirmar o encaminhamento. "
-                "Posso registrar agora para um especialista te chamar por aqui?"
+                "Posso registrar seu pedido para um especialista te chamar por aqui. "
+                "Quer que eu faça isso?"
             ),
         ]
     if reason == "fato_curso_errado":
+        try:
+            from app.course_facts import stock_reply_from_facts
+
+            built = stock_reply_from_facts(ls)
+            if built:
+                return [built]
+        except Exception:  # noqa: BLE001
+            pass
+        curso = ls.get("curso_escolhido") or ls.get("curso_recomendado") or "essa pós"
         return [
             (
-                "Deixa eu corrigir com os dados oficiais do catálogo: uso só a carga, "
-                "o prazo mínimo e os valores da tabela. Quer que eu repita esses números?"
-            ),
-            (
-                "Vou usar exatamente a carga e o prazo do catálogo. "
-                "Quer o resumo certo do curso agora?"
+                f"Sobre {curso}: te passo carga, prazo e valores certinhos. "
+                "Quer que eu detalhe mensalidade e à vista?"
             ),
         ]
     if reason == "lista_markdown":
         return [
             (
-                "Resumo em texto corrido: curso 100% online, mensalidade conforme a tabela "
-                "da faixa, documentos na hora de fechar. O que você quer esclarecer primeiro?"
+                "Resumo em texto corrido: a pós é 100% online, com mensalidade "
+                "conforme a faixa do curso e documentos na hora de fechar. "
+                "O que você quer esclarecer primeiro?"
             ),
         ]
     if reason == "preco_fora_tabela":
+        try:
+            from app.course_facts import stock_reply_from_facts
+
+            built = stock_reply_from_facts(ls)
+            if built:
+                return [built]
+        except Exception:  # noqa: BLE001
+            pass
         return [
             (
-                "A mensalidade segue a tabela do polo (faixa do curso). "
-                "À vista é o valor total com 10% — sem média mensal. "
-                "Quer que eu te diga a mensalidade e o à vista da sua faixa?"
-            ),
-            (
-                "Uso só os valores oficiais da tabela: mensalidade, total em 18x e à vista. "
-                "Quer o valor da faixa do seu curso?"
+                "A mensalidade é a da faixa do seu curso; à vista é o valor total "
+                "com 10%. Quer que eu te diga os três números (mensal, 18x e à vista)?"
             ),
         ]
     if reason == "matricula_sem_graduacao":

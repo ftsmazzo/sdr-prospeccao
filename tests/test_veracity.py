@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from app.handoff_requests import handoff_registered_reply, lead_accepts_specialist
 from app.veracity import (
     apply_enrollment_intent,
     claims_unbacked_action,
     lead_requests_enrollment,
+    lead_says_sending_document,
     reply_has_disallowed_price,
     reply_offers_enrollment,
 )
@@ -72,3 +74,41 @@ def test_enrollment_intent():
 
 def test_offers_enrollment():
     assert reply_offers_enrollment("Quer que eu te envie as condições para matrícula?")
+
+
+def test_aceite_fechar_hoje():
+    assert lead_requests_enrollment(
+        "pode me enviar os passos para matrícula, quero fechar hoje"
+    )
+    ls: dict = {"curso_escolhido": "Enfermagem em Estética", "aceite_matricula": False}
+    apply_enrollment_intent(
+        ls, "pode me enviar os passos para matrícula, quero fechar hoje"
+    )
+    assert ls["aceite_matricula"] is True
+
+
+def test_doc_arrival_sem_envio():
+    assert (
+        claims_unbacked_action("Assim que o documento chegar por aqui, eu te confirmo.")
+        == "documento_sem_envio"
+    )
+    assert (
+        claims_unbacked_action(
+            "Assim que o documento chegar por aqui, eu te confirmo.",
+            lead_sending_document=True,
+        )
+        is None
+    )
+    assert lead_says_sending_document("Vou te enviar o RG agora")
+
+
+def test_lead_accepts_encaminhe():
+    assert lead_accepts_specialist(
+        "Sim, por favor, encaminhe para o especialista e me avise assim que tiver."
+    )
+    assert lead_accepts_specialist(
+        "Sim, por favor, confirme direitinho com o polo se tem essa pós."
+    )
+    text = handoff_registered_reply(nome="André Silva", motivo="uti")
+    assert "Registrei seu pedido, André" in text
+    assert "especialista do polo" in text

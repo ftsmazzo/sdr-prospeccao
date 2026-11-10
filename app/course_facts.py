@@ -122,6 +122,29 @@ def format_facts_block(facts: list[CourseFacts]) -> str:
     return "\n".join(lines)
 
 
+def stock_reply_from_facts(ls: dict[str, Any], *, hint: str = "") -> str | None:
+    """Frase pronta humana com fatos do curso (sem meta-fala)."""
+    facts_list = facts_for_lead_state(ls)
+    if not facts_list and hint:
+        # tenta achar curso mencionado no texto recente
+        for name, _h in _catalog_entries():
+            token = name.split()[0]
+            if len(token) >= 5 and token.casefold() in (hint or "").casefold():
+                f = course_facts(name)
+                if f:
+                    facts_list = [f]
+                    break
+    if not facts_list:
+        return None
+    f = facts_list[0]
+    return (
+        f"A pós em {f.name} tem {f.hours}h, dá pra concluir a partir de "
+        f"{f.min_months} meses (prazo máximo de {f.max_months}), e a mensalidade "
+        f"é R$ {f.monthly} (total em 18x R$ {f.total_18}, ou à vista R$ {f.a_vista}). "
+        f"Quer que eu te explique como funciona a matrícula?"
+    )
+
+
 def reply_has_wrong_course_facts(reply: str) -> str | None:
     """Se a reply atribui carga/duração/preço errado a um curso do catálogo."""
     text = reply or ""

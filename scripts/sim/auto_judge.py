@@ -13,6 +13,7 @@ from app.course_facts import reply_has_wrong_course_facts
 from app.veracity import (
     claims_unbacked_action,
     lead_refuses_question,
+    lead_says_sending_document,
     reply_asks_objetivo,
     reply_has_markdown_list,
 )
@@ -53,16 +54,23 @@ _FAREWELL_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(vou|preciso|prefiro|quero)\s+pensar\b", re.IGNORECASE),
     re.compile(r"\bpensar\s+(um\s+pouco|mais|com\s+calma|direitinho|melhor)\b", re.IGNORECASE),
     re.compile(r"\bentro\s+em\s+contato\b", re.IGNORECASE),
+    re.compile(r"\bentrarei\s+em\s+contato\b", re.IGNORECASE),
+    re.compile(r"\bvolto\s+a\s+entrar\s+em\s+contato\b", re.IGNORECASE),
+    re.compile(
+        r"\bvolto\s+a\s+falar\s+(?:com\s+voc[eê]|depois|mais\s+tarde)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bte\s+aviso\b", re.IGNORECASE),
     re.compile(r"\bte\s+falo\b", re.IGNORECASE),
     re.compile(r"\bte\s+dou\s+um\s+retorno\b", re.IGNORECASE),
     re.compile(r"\bdou\s+um\s+retorno\b", re.IGNORECASE),
     re.compile(r"\bdepois\s+(te\s+)?(falo|aviso|retorno)\b", re.IGNORECASE),
     re.compile(r"\b(vou|quero)\s+(avaliar|analisar)\b", re.IGNORECASE),
+    re.compile(r"\bcontinu(?:o|arei)\s+avaliando\b", re.IGNORECASE),
     re.compile(r"\bpor\s+enquanto\s+(é|e)\s+s[oó]\b", re.IGNORECASE),
     re.compile(
         r"\bpor\s+enquanto[,.]?\s+(n[aã]o(\s+preciso)?|s[oó]\s+(isso|tirar)|"
-        r"prefiro\s+pensar|vou\s+pensar)\b",
+        r"prefiro\s+pensar|vou\s+pensar|continu)\b",
         re.IGNORECASE,
     ),
     re.compile(r"\bqualquer\s+coisa[,.]?\s+(eu\s+)?(entro|pe[cç]o|aviso)\b", re.IGNORECASE),
@@ -72,6 +80,16 @@ _FAREWELL_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bvou\s+aguardar\b", re.IGNORECASE),
     re.compile(r"\b(deixa|deixar)\s+pra\s+(l[aá]|depois)\b", re.IGNORECASE),
     re.compile(r"\bquando\s+decidir\b", re.IGNORECASE),
+    re.compile(
+        r"\btenha\s+(?:um|uma)\s+(?:[oó]timo|bom|excelente|boa)\s+"
+        r"(?:dia|tarde|noite)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bobrigad[oa]\s+pela\s+(?:aten[cç][aã]o|paci[eê]ncia|disponibilidade|"
+        r"cordialidade|ajuda|confirma[cç][aã]o)\b",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -284,6 +302,7 @@ def judge_agent_reply(
         delivery_ran=delivery_ran or action_executed,
         handoff_registered_this_turn=handoff_registered_this_turn,
         handoff_registrado=handoff_registrado,
+        lead_sending_document=lead_says_sending_document(lead_text),
     )
     if fake:
         add("acao_fingida", f"{fake}: {text[:100]}")

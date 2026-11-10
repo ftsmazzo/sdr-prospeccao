@@ -44,7 +44,8 @@ Responda APENAS JSON válido:
   },
   "veredito": "fechou"|"proximo_passo"|"perdeu"|"encaminhou"
 }
-Critérios: escuta=não reperguntar o já dito; qualificacao=graduação antes de matrícula (objetivo não bloqueia); objecao=acolheu+isolou+prova; naturalidade=soa humana; conducao=próximo passo concreto; veracidade=não inventou fato, política, valor ou ação (recebi doc, confirmei com polo, etc.).
+Critérios: escuta=não reperguntar o já dito; qualificacao=graduação antes de matrícula (objetivo não bloqueia); objecao=acolheu+isolou+prova; naturalidade=soa humana; conducao=próximo passo concreto e ordem correta das etapas; veracidade=NÃO inventou fato, política, valor ou ação (ex.: recebi doc, confirmei com polo, preço inexistente, carga/duração errada).
+IMPORTANTE — veracidade NÃO cobre problemas de processo/ordem (pedir CPF cedo, pular etapa, condução fraca). Isso vai em conducao (e/ou qualificacao), NÃO em veracidade. Se só houve falha de processo sem invenção, veracidade deve permanecer alta (4–5).
 Se houver QUALQUER invenção de fato/política/valor/ação, veracidade <= 2 e isso deve pesar no veredito (prefira perdeu ou proximo_passo, não fechou).
 veredito encaminhou = handoff/não elegível/aluno atual bem tratado."""
     user = (

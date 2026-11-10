@@ -47,10 +47,16 @@ from app.course_facts import (
     format_facts_block,
     reply_has_wrong_course_facts,
 )
-from app.handoff_requests import lead_accepts_specialist, register_handoff_request
+from app.handoff_requests import (
+    agent_offered_specialist,
+    handoff_registered_reply,
+    lead_accepts_specialist,
+    register_handoff_request,
+)
 from app.veracity import (
     apply_enrollment_intent,
     claims_unbacked_action,
+    lead_says_sending_document,
     mark_refused_fields,
     reply_has_disallowed_price,
     reply_has_markdown_list,
@@ -119,17 +125,20 @@ _REGEN_MOTIVOS = {
     "acao_fingida": (
         "Você afirmou uma ação que NÃO aconteceu no sistema "
         "(receber documento, confirmar/verificar com o polo, acionar especialista, "
-        "aguardar retorno, já ter enviado contrato). "
-        "Reescreva SEM fingir. Se o sistema registrou handoff NESTE turno, diga: "
+        "aguardar retorno, já ter enviado contrato, 'assim que o documento chegar' "
+        "sem o lead ter dito que vai enviar). "
+        "Reescreva SEM fingir e SEM meta-fala (não diga catálogo/tabela/regras). "
+        "Se o sistema registrou handoff NESTE turno, diga: "
         "'Registrei seu pedido; um especialista do polo vai falar com você por aqui.' "
         "Se perguntarem andamento depois: 'seu pedido está registrado; o especialista "
         "te chama por aqui.' Nunca diga que verificou ou recebeu retorno."
     ),
     "preco_fora_tabela": (
-        "Você citou um valor que NÃO está na tabela precos.md. "
-        "Use SOMENTE mensalidade / total 18x / à vista da faixa do curso. "
-        "À vista é o VALOR TOTAL da tabela — nunca divida por meses nem invente 'média mensal'. "
-        "Não chame o valor à vista de 'mensalidade'."
+        "Você citou um valor fora da faixa do curso. "
+        "Use SOMENTE mensalidade / total 18x / à vista corretos. "
+        "À vista é o VALOR TOTAL — nunca divida por meses nem invente 'média mensal'. "
+        "Não chame o valor à vista de 'mensalidade'. Fale os números direto, "
+        "sem mencionar tabela/catálogo."
     ),
     "matricula_sem_graduacao": (
         "Você ofereceu matrícula/passo a passo sem a graduação confirmada no estado. "
@@ -138,7 +147,8 @@ _REGEN_MOTIVOS = {
     ),
     "fato_curso_errado": (
         "Você citou carga horária, duração mínima ou preço diferente dos "
-        "'Fatos dos cursos em discussão'. Reescreva usando EXATAMENTE esses números. "
+        "'Fatos dos cursos em discussão'. Reescreva usando EXATAMENTE esses números, "
+        "em tom humano, sem mencionar catálogo, tabela, dados oficiais ou regras. "
         "Se o lead corrigiu e ele estava certo, agradeça e corrija."
     ),
     "lista_markdown": (
@@ -341,6 +351,7 @@ class Orchestrator:
         last_assistant: str,
         has_media: bool = False,
         just_entered_handoff: bool = False,
+        user_text: str = "",
     ) -> str | None:
         if blocked_promise_reason:
             return blocked_promise_reason
@@ -357,6 +368,7 @@ class Orchestrator:
             delivery_ran=delivery_ran,
             handoff_registered_this_turn=bool(meta.get("_handoff_registered_this_turn")),
             handoff_registrado=bool(meta.get("handoff_registrado")),
+            lead_sending_document=lead_says_sending_document(user_text),
         )
         if fake:
             return "acao_fingida"
@@ -593,6 +605,7 @@ class Orchestrator:
         delivery_ran: bool,
         has_media: bool = False,
         just_entered_handoff: bool = False,
+        user_text: str = "",
     ) -> str:
         self.last_reply_diag = {
             "regen": False,
@@ -610,6 +623,7 @@ class Orchestrator:
             last_assistant=last_assistant,
             has_media=has_media,
             just_entered_handoff=just_entered_handoff,
+            user_text=user_text,
         )
         if reason:
             self.last_reply_diag["regen"] = True
@@ -632,6 +646,7 @@ class Orchestrator:
                     last_assistant=last_assistant,
                     has_media=has_media,
                     just_entered_handoff=just_entered_handoff,
+                    user_text=user_text,
                 )
                 if not still:
                     meta["stock_streak"] = 0
@@ -804,30 +819,47 @@ class Orchestrator:
         if meta.get("etapa") == "handoff_humano":
             logger.info("handoff_humano phone=%s summary=%s", phone, summarize_lead(meta))
 
-        # Registro real de encaminhamento (idempotente por phone+motivo).
+        # Registro real: handoff automático OU lead aceitou encaminhamento oferecido.
+        offered = agent_offered_specialist(last_assistant) or agent_offered_specialist(
+            agent.reply or ""
+        )
+        accepted = lead_accepts_specialist(user_text)
+        is_aluno = bool(ls.get("e_aluno_atual")) or meta.get("etapa") == "aluno_atual"
         should_register = just_entered_handoff or (
-            lead_accepts_specialist(user_text)
+            accepted
             and (
-                meta.get("etapa") == "handoff_humano"
-                or "especialista" in (agent.reply or "").casefold()
-                or "encaminh" in (agent.reply or "").casefold()
+                offered
+                or meta.get("etapa") in ("handoff_humano", "aluno_atual")
+                or is_aluno
             )
         )
+        force_registrei = False
         if should_register:
-            motivo = str(
-                meta.get("handoff_reason")
-                or agent.state_update.get("proximo_passo")
-                or "especialista"
-            )
-            if just_entered_handoff or lead_accepts_specialist(user_text):
+            if is_aluno:
+                motivo = "suporte_aluno"
+            else:
+                motivo = str(
+                    meta.get("handoff_reason")
+                    or ls.get("area_interesse")
+                    or agent.state_update.get("proximo_passo")
+                    or "especialista"
+                )
+            if just_entered_handoff or accepted:
                 self._register_handoff_now(
                     phone=phone,
                     meta=meta,
                     motivo=motivo,
                     push_name=push_name,
                 )
-                if meta.get("etapa") != "handoff_humano":
-                    enter_handoff(meta, motivo if motivo != "especialista" else "especialista")
+                force_registrei = bool(accepted)
+                if meta.get("etapa") == "aluno_atual" or is_aluno:
+                    meta["handoff_avisado"] = True
+                    meta["etapa"] = "aluno_atual"
+                elif meta.get("etapa") != "handoff_humano":
+                    enter_handoff(
+                        meta,
+                        motivo if motivo not in ("especialista",) else "especialista",
+                    )
                     just_entered_handoff = True
 
         reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
@@ -843,7 +875,26 @@ class Orchestrator:
             delivery_ran=delivery_ran,
             has_media=has_media,
             just_entered_handoff=just_entered_handoff,
+            user_text=user_text,
         )
+        # Aceite de especialista no mesmo turno: resposta deve conter o registro.
+        if force_registrei and meta.get("_handoff_registered_this_turn"):
+            if not re.search(r"(?i)\bregistrei\b", reply or ""):
+                reply = handoff_registered_reply(
+                    nome=ls.get("nome") or push_name or None,
+                    motivo=str(
+                        meta.get("handoff_reason")
+                        or ("suporte_aluno" if is_aluno else "especialista")
+                    ),
+                )
+                self.last_reply_diag["stock"] = True
+                self.last_reply_diag["stock_reason"] = "handoff_registered"
+                self.last_reply_diag["stock_text"] = reply
+            meta["handoff_avisado"] = True
+            if not meta.get("handoff_reason"):
+                meta["handoff_reason"] = (
+                    "suporte_aluno" if is_aluno else "especialista"
+                )
         self.memory.set_meta(phone, meta)
 
         self.memory.append(phone, "user", user_text)

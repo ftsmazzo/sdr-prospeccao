@@ -45,6 +45,10 @@ def test_despedida_sem_pergunta_ok():
         "Por enquanto vou focar na pós em Enfermagem em Estética mesmo."
     )
     assert looks_like_farewell("Quero pensar mais um pouco. Depois te falo, tá?")
+    assert looks_like_farewell(
+        "Entrarei em contato caso decida seguir. Tenha um ótimo dia!"
+    )
+    assert looks_like_farewell("Obrigada pela atenção. Continuarei avaliando.")
 
 
 def test_promessa_lembrete_fiscal():

@@ -51,6 +51,13 @@ _FAKE_SPECIALIST_PROGRESS_RE = re.compile(
     r")"
 )
 
+# “Assim que o documento chegar” — só se o lead disse que vai enviar.
+_DOC_ARRIVAL_PROMISE_RE = re.compile(
+    r"(?i)\bassim\s+que\s+(?:o\s+|a\s+|seu\s+|sua\s+)?"
+    r"(?:documento|rg|cnh|foto|arquivo|pdf|diploma)\s+"
+    r"(?:chegar|chegar\s+por\s+aqui|for\s+enviado)"
+)
+
 # “Registrei” — só no turno em que o código gravou.
 _CLAIMS_JUST_REGISTERED_RE = re.compile(
     r"(?i)\bregistrei\s+(?:seu|o)\s+pedido\b"
@@ -84,14 +91,26 @@ _OFFERS_ENROLLMENT_RE = re.compile(
 _LEAD_ENROLLMENT_RE = re.compile(
     r"(?i)\b("
     r"(?:manda|me\s+manda|envie|passa|quero)\s+(?:o\s+)?passo\s+a\s+passo"
-    r"|passo\s+a\s+passo\s+da\s+matr[ií]cula"
+    r"|passo\s+a\s+passo\s+(?:para\s+)?(?:da\s+)?matr[ií]cula"
+    r"|passos\s+para\s+matr[ií]cula"
     r"|como\s+(?:fa[cç]o|fazer)\s+a?\s*matr[ií]cula"
     r"|quero\s+(?:me\s+)?matricular"
     r"|quero\s+fazer\s+(?:a\s+)?matr[ií]cula"
+    r"|quero\s+fechar(?:\s+hoje)?"
     r"|vamos\s+(?:seguir|fechar|matricular)"
     r"|pode\s+seguir\s+com\s+a\s+matr[ií]cula"
     r"|já\s+decidi.*matr[ií]cula"
-    r"|matricula\s+agora"
+    r"|matr[ií]cula\s+agora"
+    r")"
+)
+
+_LEAD_SENDING_DOC_RE = re.compile(
+    r"(?i)\b("
+    r"(?:vou|posso|j[aá]\s+vou)\s+(?:te\s+)?(?:enviar|mandar|passar)\s+"
+    r"(?:o\s+|meu\s+|a\s+|minha\s+)?(?:rg|cnh|cpf|diploma|documento|foto|arquivo|hist)"
+    r"|mando\s+(?:o\s+|meu\s+)?(?:rg|documento|foto)"
+    r"|segue\s+(?:o\s+)?(?:rg|documento|foto)"
+    r"|enviei\s+(?:o\s+)?(?:rg|documento|foto)"
     r")"
 )
 
@@ -134,6 +153,10 @@ def lead_requests_enrollment(text: str) -> bool:
     return bool(_LEAD_ENROLLMENT_RE.search(text or ""))
 
 
+def lead_says_sending_document(text: str) -> bool:
+    return bool(_LEAD_SENDING_DOC_RE.search(text or ""))
+
+
 def reply_offers_enrollment(text: str) -> bool:
     return bool(_OFFERS_ENROLLMENT_RE.search(text or ""))
 
@@ -155,11 +178,14 @@ def claims_unbacked_action(
     delivery_ran: bool = False,
     handoff_registered_this_turn: bool = False,
     handoff_registrado: bool = False,
+    lead_sending_document: bool = False,
 ) -> str | None:
     """Retorna submotivo se a reply afirma ação sem respaldo no código."""
     raw = reply or ""
     if _RECEIVED_DOC_RE.search(raw) and not has_media:
         return "recebeu_sem_midia"
+    if _DOC_ARRIVAL_PROMISE_RE.search(raw) and not lead_sending_document:
+        return "documento_sem_envio"
     if _FAKE_CONFIRM_RE.search(raw):
         return "confirmacao_polo"
     # Verificar/aguardar especialista: sempre fingido (registro ≠ consulta).

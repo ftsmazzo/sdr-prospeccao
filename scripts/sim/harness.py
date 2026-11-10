@@ -140,8 +140,6 @@ async def run_persona(
             farewell_streak = 0
 
         meta_before = orch.memory.get_meta(phone)
-        ls_before = meta_before.get("lead_state") or {}
-        aceite_before = bool(ls_before.get("aceite_matricula"))
         etapa_antes = meta_before.get("etapa") or "abertura"
         handoff_avisado_before = bool(meta_before.get("handoff_avisado"))
 
@@ -199,13 +197,16 @@ async def run_persona(
         history.append({"role": "agent", "turno": turn, "text": agent_text})
 
         meta = orch.memory.get_meta(phone)
+        ls_after = meta.get("lead_state") or {}
+        # Aceite pode vir na mesma mensagem do turno (ex.: "quero fechar hoje").
+        aceite_after = bool(ls_after.get("aceite_matricula"))
         just_entered_handoff = (
             meta.get("etapa") == "handoff_humano" and etapa_antes != "handoff_humano"
         )
         turn_violations = judge_agent_reply(
             agent_text,
             turno=turn,
-            aceite_matricula=aceite_before,
+            aceite_matricula=aceite_after,
             action_executed=action_executed,
             catalog=catalog,
             lead_text=lead_text,

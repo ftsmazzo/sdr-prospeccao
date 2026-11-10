@@ -130,13 +130,57 @@ def lead_accepts_specialist(text: str) -> bool:
     return bool(
         re.search(
             r"(?i)\b("
-            r"pode\s+(?:encaminhar|acionar|confirmar|verificar|chamar)"
+            r"pode\s+(?:encaminhar|acionar|confirmar|verificar|chamar|anotar)"
             r"|pode\s+sim"
             r"|quero\s+(?:o\s+)?especialista"
             r"|fala\s+com\s+(?:o\s+)?especialista"
-            r"|confirma\s+(?:mesmo\s+)?com\s+(?:o\s+)?(?:especialista|polo)"
-            r"|sim,?\s+(?:pode|quero|confirme)"
+            r"|confirm(?:e|a|ar)\s+(?:mesmo\s+|direitinho\s+)?com\s+(?:o\s+)?(?:especialista|polo)"
+            r"|sim,?\s+(?:pode|quero|confirme|por\s+favor)"
+            r"|encaminhe(?:\s+para|\s+pro|\s+ao)?"
+            r"|anota(?:\s+meu\s+caso)?"
+            r"|me\s+avise\s+assim\s+que"
+            r"|pede(?:\s+para|\s+pro)\s+(?:ele|o\s+especialista)"
+            r"|passar?\s+(?:meu\s+)?(?:interesse|contato|pedido)"
             r")\b",
             text or "",
         )
+    )
+
+
+def agent_offered_specialist(text: str) -> bool:
+    low = (text or "").casefold()
+    return any(
+        k in low
+        for k in (
+            "especialista",
+            "encaminh",
+            "anotar seu caso",
+            "anoto seu caso",
+            "passar seu interesse",
+            "passar o contato",
+        )
+    )
+
+
+def handoff_registered_reply(
+    *,
+    nome: str | None,
+    motivo: str,
+) -> str:
+    first = (nome or "").strip().split()[0] if nome else ""
+    motivo_l = (motivo or "sua dúvida").replace("_", " ")
+    if motivo_l in ("especialista", "geral", "loop stock", "loop_stock"):
+        motivo_l = "isso"
+    elif motivo_l == "suporte aluno":
+        motivo_l = "seu atendimento"
+    elif motivo_l in ("curso fora lista", "curso fora catalogo", "uti"):
+        motivo_l = "essa especialização"
+    if first:
+        return (
+            f"Registrei seu pedido, {first}. Um especialista do polo vai falar "
+            f"com você por aqui sobre {motivo_l}."
+        )
+    return (
+        f"Registrei seu pedido. Um especialista do polo vai falar com você "
+        f"por aqui sobre {motivo_l}."
     )
