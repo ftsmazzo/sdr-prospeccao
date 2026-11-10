@@ -42,11 +42,18 @@ from app.speech import (
     requests_personal_data,
     to_spoken_script,
 )
+from app.course_facts import (
+    facts_for_lead_state,
+    format_facts_block,
+    reply_has_wrong_course_facts,
+)
+from app.handoff_requests import lead_accepts_specialist, register_handoff_request
 from app.veracity import (
     apply_enrollment_intent,
     claims_unbacked_action,
     mark_refused_fields,
     reply_has_disallowed_price,
+    reply_has_markdown_list,
     reply_offers_enrollment,
 )
 
@@ -70,7 +77,10 @@ AUDIO_KEY_HINTS = (
 )
 
 _SCARCITY_RES = (
-    re.compile(r"garantir\s+(sua|a|sua\s+própria)\s+vaga", re.IGNORECASE),
+    re.compile(
+        r"\b(?:garantir|garante|garanta)\s+(?:sua\s+)?(?:a\s+)?vaga\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"últimas?\s+vagas?", re.IGNORECASE),
     re.compile(r"ultimas?\s+vagas?", re.IGNORECASE),
     re.compile(r"só\s+hoje|so\s+hoje", re.IGNORECASE),
@@ -108,12 +118,12 @@ _REGEN_MOTIVOS = {
     ),
     "acao_fingida": (
         "Você afirmou uma ação que NÃO aconteceu no sistema "
-        "(receber documento, confirmar com o polo, consultar, encaminhar/reforçar "
-        "com especialista, já ter enviado contrato). "
-        "Reescreva SEM fingir: se falar de documento, diga 'assim que chegar, eu te confirmo'; "
-        "se o curso não está na lista, diga 'na nossa lista atual não tem; um especialista "
-        "pode confirmar se há algo novo'; em handoff, avise UMA vez que um especialista "
-        "vai dar sequência — sem repetir 'vou reforçar'."
+        "(receber documento, confirmar/verificar com o polo, acionar especialista, "
+        "aguardar retorno, já ter enviado contrato). "
+        "Reescreva SEM fingir. Se o sistema registrou handoff NESTE turno, diga: "
+        "'Registrei seu pedido; um especialista do polo vai falar com você por aqui.' "
+        "Se perguntarem andamento depois: 'seu pedido está registrado; o especialista "
+        "te chama por aqui.' Nunca diga que verificou ou recebeu retorno."
     ),
     "preco_fora_tabela": (
         "Você citou um valor que NÃO está na tabela precos.md. "
@@ -125,6 +135,15 @@ _REGEN_MOTIVOS = {
         "Você ofereceu matrícula/passo a passo sem a graduação confirmada no estado. "
         "Pergunte primeiro se a graduação já está concluída (uma pergunta só). "
         "Não ofereça matrícula antes disso."
+    ),
+    "fato_curso_errado": (
+        "Você citou carga horária, duração mínima ou preço diferente dos "
+        "'Fatos dos cursos em discussão'. Reescreva usando EXATAMENTE esses números. "
+        "Se o lead corrigiu e ele estava certo, agradeça e corrija."
+    ),
+    "lista_markdown": (
+        "Não use listas com marcadores (-, *, 1.) no WhatsApp. "
+        "Reescreva em texto corrido, no máximo 2–3 frases."
     ),
 }
 
@@ -336,11 +355,17 @@ class Orchestrator:
             just_entered_handoff=just_entered_handoff,
             handoff_avisado=bool(meta.get("handoff_avisado")),
             delivery_ran=delivery_ran,
+            handoff_registered_this_turn=bool(meta.get("_handoff_registered_this_turn")),
+            handoff_registrado=bool(meta.get("handoff_registrado")),
         )
         if fake:
             return "acao_fingida"
         if reply_has_disallowed_price(reply):
             return "preco_fora_tabela"
+        if reply_has_wrong_course_facts(reply):
+            return "fato_curso_errado"
+        if reply_has_markdown_list(reply):
+            return "lista_markdown"
         ls = meta.get("lead_state") or {}
         if reply_offers_enrollment(reply) and not ls.get("graduacao"):
             return "matricula_sem_graduacao"
@@ -405,14 +430,20 @@ class Orchestrator:
             bool(avoid),
             streak,
         )
-        # Dois stocks seguidos → handoff (anti-loop).
+        # Dois stocks seguidos → handoff (anti-loop) + registro real.
         if streak >= 2 and meta.get("etapa") != "handoff_humano":
             enter_handoff(meta, "loop_stock")
+            phone = str(meta.get("_phone") or "unknown")
+            self._register_handoff_now(
+                phone=phone,
+                meta=meta,
+                motivo="loop_stock",
+                push_name=str(meta.get("_push_name") or ""),
+            )
             logger.info("handoff por loop_stock phone_meta_etapa=%s", meta.get("etapa"))
             return (
-                "Vou pedir pra um especialista do polo te ajudar a seguir daqui, "
-                "assim você não fica sem uma resposta clara. Em breve alguém retoma "
-                "com você por aqui, tá bem?"
+                "Registrei seu pedido; um especialista do polo vai falar com você "
+                "por aqui, tá bem?"
             )
         return stock
 
@@ -521,6 +552,34 @@ class Orchestrator:
             just_entered_handoff or meta.get("handoff_reason")
         ):
             meta["handoff_avisado"] = True
+
+    def _register_handoff_now(
+        self,
+        *,
+        phone: str,
+        meta: dict,
+        motivo: str,
+        push_name: str = "",
+    ) -> dict:
+        ls = meta.get("lead_state") or {}
+        record = register_handoff_request(
+            phone=phone,
+            nome=ls.get("nome") or push_name or None,
+            motivo=motivo or meta.get("handoff_reason") or "geral",
+            curso=ls.get("curso_escolhido") or ls.get("curso_recomendado"),
+            lead_summary={
+                "graduacao": ls.get("graduacao"),
+                "area_interesse": ls.get("area_interesse"),
+                "objetivo": ls.get("objetivo"),
+                "curso_escolhido": ls.get("curso_escolhido"),
+                "etapa": meta.get("etapa"),
+            },
+            settings=self.settings,
+        )
+        meta["handoff_request_id"] = record.get("id")
+        meta["handoff_registrado"] = True
+        meta["_handoff_registered_this_turn"] = True
+        return record
 
     async def _finalize_reply(
         self,
@@ -678,6 +737,9 @@ class Orchestrator:
         last_assistant = self._last_assistant_text(phone)
         mark_refused_fields(meta, lead_text=user_text, last_agent=last_assistant)
         ls = meta.get("lead_state") or ls
+        meta["_phone"] = phone
+        meta["_push_name"] = push_name
+        meta.pop("_handoff_registered_this_turn", None)
 
         etapa_antes = meta.get("etapa") or "abertura"
         system = build_system_prompt(
@@ -689,11 +751,15 @@ class Orchestrator:
                 "desconto_respondido": meta.get("desconto_respondido"),
                 "handoff_reason": meta.get("handoff_reason"),
                 "handoff_avisado": meta.get("handoff_avisado"),
+                "handoff_registrado": meta.get("handoff_registrado"),
                 "campos_recusados": meta.get("campos_recusados") or [],
             },
             agent_name=self.settings.agent_name,
             agent_gender=self.settings.agent_gender,
         )
+        facts_block = format_facts_block(facts_for_lead_state(ls))
+        if facts_block:
+            system = f"{system}\n\n{facts_block}\n"
         history = self.memory.get_history(phone)
         messages: list[dict] = [{"role": "system", "content": system}]
         if push_name and not history:
@@ -737,6 +803,32 @@ class Orchestrator:
         )
         if meta.get("etapa") == "handoff_humano":
             logger.info("handoff_humano phone=%s summary=%s", phone, summarize_lead(meta))
+
+        # Registro real de encaminhamento (idempotente por phone+motivo).
+        should_register = just_entered_handoff or (
+            lead_accepts_specialist(user_text)
+            and (
+                meta.get("etapa") == "handoff_humano"
+                or "especialista" in (agent.reply or "").casefold()
+                or "encaminh" in (agent.reply or "").casefold()
+            )
+        )
+        if should_register:
+            motivo = str(
+                meta.get("handoff_reason")
+                or agent.state_update.get("proximo_passo")
+                or "especialista"
+            )
+            if just_entered_handoff or lead_accepts_specialist(user_text):
+                self._register_handoff_now(
+                    phone=phone,
+                    meta=meta,
+                    motivo=motivo,
+                    push_name=push_name,
+                )
+                if meta.get("etapa") != "handoff_humano":
+                    enter_handoff(meta, motivo if motivo != "especialista" else "especialista")
+                    just_entered_handoff = True
 
         reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
             phone, meta, agent, push_name

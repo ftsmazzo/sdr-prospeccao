@@ -9,10 +9,12 @@ from typing import Any
 from app.lead_state import reply_looks_like_promise
 from app.pricing import allowed_money_amounts
 from app.speech import requests_personal_data
+from app.course_facts import reply_has_wrong_course_facts
 from app.veracity import (
     claims_unbacked_action,
     lead_refuses_question,
     reply_asks_objetivo,
+    reply_has_markdown_list,
 )
 
 _PRICE_RE = re.compile(r"R\$\s*([\d.]+,\d{2})", re.IGNORECASE)
@@ -250,6 +252,8 @@ def judge_agent_reply(
     just_entered_handoff: bool = False,
     handoff_avisado: bool = False,
     delivery_ran: bool = False,
+    handoff_registered_this_turn: bool = False,
+    handoff_registrado: bool = False,
     prev_agent_asked_objetivo: bool = False,
     lead_refused_objetivo: bool = False,
     asked_objetivo_after_refuse_count: int = 0,
@@ -278,9 +282,18 @@ def judge_agent_reply(
         just_entered_handoff=just_entered_handoff,
         handoff_avisado=handoff_avisado,
         delivery_ran=delivery_ran or action_executed,
+        handoff_registered_this_turn=handoff_registered_this_turn,
+        handoff_registrado=handoff_registrado,
     )
     if fake:
         add("acao_fingida", f"{fake}: {text[:100]}")
+
+    wrong = reply_has_wrong_course_facts(text)
+    if wrong:
+        add("fato_curso_errado", wrong)
+
+    if reply_has_markdown_list(text):
+        add("lista_markdown", text[:120])
 
     if lead_refused_objetivo and reply_asks_objetivo(text):
         # 2ª+ pergunta de objetivo após recusa

@@ -86,6 +86,23 @@ def write_reports(
             lines.append(f"- **{k}**: {sum(vals) / len(vals):.2f}")
     lines.append("")
 
+    lines.append("## Justificativas de veracidade")
+    lines.append("")
+    for r in results:
+        j = r.get("judge") or {}
+        just = (j.get("justificativas") or {}).get("veracidade") or ""
+        score = j.get("veracidade")
+        if score is None:
+            continue
+        try:
+            score_i = int(score)
+        except (TypeError, ValueError):
+            score_i = 0
+        mark = " ⚠️" if score_i < 4 else ""
+        lines.append(f"### `{r.get('persona_id')}` — veracidade={score}{mark}")
+        lines.append(f"> {just or '_sem justificativa_'}")
+        lines.append("")
+
     lines.append("## Diagnóstico regen / stock")
     lines.append("")
     for r in results:

@@ -725,8 +725,26 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
                 "Qual dúvida posso tirar agora?"
             ),
             (
-                "Um especialista do polo vai dar sequência daqui. "
-                "Quando quiser, me chama que eu te ajudo no que estiver na minha mão."
+                "Seu pedido fica registrado no sistema quando você confirmar o encaminhamento. "
+                "Posso registrar agora para um especialista te chamar por aqui?"
+            ),
+        ]
+    if reason == "fato_curso_errado":
+        return [
+            (
+                "Deixa eu corrigir com os dados oficiais do catálogo: uso só a carga, "
+                "o prazo mínimo e os valores da tabela. Quer que eu repita esses números?"
+            ),
+            (
+                "Vou usar exatamente a carga e o prazo do catálogo. "
+                "Quer o resumo certo do curso agora?"
+            ),
+        ]
+    if reason == "lista_markdown":
+        return [
+            (
+                "Resumo em texto corrido: curso 100% online, mensalidade conforme a tabela "
+                "da faixa, documentos na hora de fechar. O que você quer esclarecer primeiro?"
             ),
         ]
     if reason == "preco_fora_tabela":
@@ -759,6 +777,8 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
         "acao_fingida",
         "preco_fora_tabela",
         "matricula_sem_graduacao",
+        "fato_curso_errado",
+        "lista_markdown",
     ) or "bloqueada etapa" in reason:
         curso_lbl = ls.get("curso_escolhido") or "o curso"
         return [

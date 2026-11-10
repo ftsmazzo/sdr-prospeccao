@@ -30,28 +30,29 @@ def test_confirmei_com_polo():
 
 def test_handoff_reforcar():
     assert (
-        claims_unbacked_action(
-            "Vou reforçar com o especialista do polo.",
-            just_entered_handoff=False,
-            handoff_avisado=False,
-        )
-        == "handoff_sem_acao"
+        claims_unbacked_action("Vou reforçar com o especialista do polo.")
+        == "especialista_sem_acao"
     )
     assert (
         claims_unbacked_action(
-            "Vou pedir pra um especialista te ajudar.",
-            just_entered_handoff=True,
-            handoff_avisado=False,
+            "Vou verificar com o especialista sobre UTI.",
+            handoff_registered_this_turn=True,
+        )
+        == "especialista_sem_acao"
+    )
+    assert (
+        claims_unbacked_action(
+            "Registrei seu pedido; um especialista do polo vai falar com você.",
+            handoff_registered_this_turn=True,
         )
         is None
     )
     assert (
         claims_unbacked_action(
-            "Vou reforçar com o especialista.",
-            just_entered_handoff=True,
-            handoff_avisado=True,
+            "Seu pedido está registrado; o especialista te chama por aqui.",
+            handoff_registrado=True,
         )
-        == "handoff_repetido"
+        is None
     )
 
 

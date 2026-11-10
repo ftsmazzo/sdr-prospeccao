@@ -33,15 +33,36 @@ _FAKE_CONFIRM_RE = re.compile(
     r")"
 )
 
-# Encaminhamento / reforço com especialista.
-_HANDOFF_CLAIM_RE = re.compile(
+# Futuro / andamento inventado (nunca ok, mesmo com registro).
+_FAKE_SPECIALIST_PROGRESS_RE = re.compile(
     r"(?i)\b("
     r"vou\s+refor[cç]ar"
+    r"|vou\s+(?:verificar|confirmar|acionar|consultar)\s+(?:com\s+)?"
+    r"(?:o\s+)?(?:especialista|polo|equipe)"
+    r"|te\s+aviso\s+quando"
+    r"|assim\s+que\s+(?:tiver|receber)\s+(?:a\s+)?(?:resposta|confirma[cç][aã]o|retorno)"
+    r"|ainda\s+n[aã]o\s+(?:recebi|tenho)\s+(?:o\s+)?(?:retorno|confirma[cç][aã]o)"
+    r"|estou\s+aguardando\s+(?:o\s+)?especialista"
+    r"|aguardando\s+(?:o\s+)?(?:retorno|confirma[cç][aã]o)\s+(?:do\s+)?especialista"
     r"|encaminhei"
     r"|j[aá]\s+encaminhei"
     r"|vou\s+encaminhar"
     r"|pedi\s+pra\s+(?:um\s+)?especialista"
-    r"|especialista\s+(?:vai|do\s+polo)\s+(?:te\s+)?(?:ajudar|retomar|entrar)"
+    r")"
+)
+
+# “Registrei” — só no turno em que o código gravou.
+_CLAIMS_JUST_REGISTERED_RE = re.compile(
+    r"(?i)\bregistrei\s+(?:seu|o)\s+pedido\b"
+)
+
+# Status após registro (ok se handoff_registrado, qualquer turno).
+_HANDOFF_STATUS_RE = re.compile(
+    r"(?i)\b("
+    r"pedido\s+est[aá]\s+registrado"
+    r"|especialista\s+(?:do\s+polo\s+)?(?:vai|vai\s+te)\s+"
+    r"(?:falar|ajudar|retomar|entrar|dar\s+sequ[eê]ncia|te\s+chama)"
+    r"|especialista\s+te\s+chama"
     r"|algu[eé]m\s+(?:do\s+polo\s+)?(?:vai|retoma)"
     r")"
 )
@@ -132,6 +153,8 @@ def claims_unbacked_action(
     just_entered_handoff: bool = False,
     handoff_avisado: bool = False,
     delivery_ran: bool = False,
+    handoff_registered_this_turn: bool = False,
+    handoff_registrado: bool = False,
 ) -> str | None:
     """Retorna submotivo se a reply afirma ação sem respaldo no código."""
     raw = reply or ""
@@ -139,12 +162,19 @@ def claims_unbacked_action(
         return "recebeu_sem_midia"
     if _FAKE_CONFIRM_RE.search(raw):
         return "confirmacao_polo"
-    if _HANDOFF_CLAIM_RE.search(raw):
-        # Só a 1ª fala ao entrar em handoff neste turno é permitida.
-        if handoff_avisado:
-            return "handoff_repetido"
-        if not just_entered_handoff:
-            return "handoff_sem_acao"
+    # Verificar/aguardar especialista: sempre fingido (registro ≠ consulta).
+    if _FAKE_SPECIALIST_PROGRESS_RE.search(raw):
+        return "especialista_sem_acao"
+    if _CLAIMS_JUST_REGISTERED_RE.search(raw):
+        if not handoff_registered_this_turn:
+            return "registro_sem_acao"
+    elif _HANDOFF_STATUS_RE.search(raw):
+        if not (handoff_registrado or handoff_registered_this_turn):
+            return "registro_sem_acao"
+        if handoff_avisado and not handoff_registered_this_turn:
+            # status curto ok; evitar spam de "especialista vai" em loop
+            if re.search(r"(?i)\bregistrei\b", raw):
+                return "handoff_repetido"
     # “já preparei/enviei” sem delivery — coberto em parte por promessa_sem_acao;
     # reforço leve se afirmar passado sem delivery.
     if not delivery_ran and re.search(
@@ -152,7 +182,16 @@ def claims_unbacked_action(
         raw,
     ):
         return "entrega_afirmada"
+    _ = just_entered_handoff  # reservado / compat
     return None
+
+
+def reply_has_markdown_list(text: str) -> bool:
+    """True se há marcadores de lista típicos de Markdown (ruim no WhatsApp)."""
+    return bool(
+        re.search(r"(?m)^(?:\s*[-*•]\s+|\s*\d+[.)]\s+)", text or "")
+        or re.search(r"\n\s*[-*•]\s+\S", text or "")
+    )
 
 
 def apply_enrollment_intent(ls: dict[str, Any], user_text: str) -> None:

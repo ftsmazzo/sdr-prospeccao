@@ -213,6 +213,8 @@ async def run_persona(
             just_entered_handoff=just_entered_handoff,
             handoff_avisado=handoff_avisado_before,
             delivery_ran=action_executed,
+            handoff_registered_this_turn=bool(meta.get("_handoff_registered_this_turn")),
+            handoff_registrado=bool(meta.get("handoff_registrado")),
             prev_agent_asked_objetivo=prev_agent_asked_objetivo,
             lead_refused_objetivo=lead_refused_objetivo,
             asked_objetivo_after_refuse_count=asked_objetivo_after_refuse_count,

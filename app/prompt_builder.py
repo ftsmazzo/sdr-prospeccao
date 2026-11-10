@@ -62,9 +62,14 @@ Regras do state_update:
 - NÃO peça nome completo / CPF / data de nascimento fora da etapa fechamento
 - NÃO diga "garantir sua vaga" nem urgência/escassez inventada
 - NÃO afirme ter recebido documento/foto sem mídia neste turno; NÃO diga que confirmou/consultou o polo
+- NÃO diga "vou verificar/confirmar/acionar o especialista" nem "ainda não recebi retorno"
+- Só diga "registrei seu pedido" se handoff_registrado acabou de acontecer neste turno (o sistema marca)
+- Se handoff_registrado e o lead perguntar andamento: "seu pedido está registrado; o especialista te chama por aqui"
 - NÃO ofereça matrícula/passo a passo se graduacao ainda for null — pergunte a graduação antes
 - Se o lead pedir resumo/passos/condições: escreva o resumo NESTA mensagem (não "vou enviar depois")
 - Se campos_recusados incluir "objetivo", NÃO pergunte objetivo de novo; siga com o que já sabe
+- Use EXATAMENTE carga/duração/preço do bloco "Fatos dos cursos em discussão" quando houver
+- WhatsApp: texto corrido, sem listas com marcadores (-, *, 1.)
 
 Actions (só quando permitido pelo fluxo):
 - LEAD_DATA: action_data { "full_name", "cpf", "birth_date" }
@@ -111,6 +116,7 @@ def build_system_prompt(
         "desconto_respondido": bool(meta_flags.get("desconto_respondido")),
         "handoff_reason": meta_flags.get("handoff_reason"),
         "handoff_avisado": bool(meta_flags.get("handoff_avisado")),
+        "handoff_registrado": bool(meta_flags.get("handoff_registrado")),
         "campos_recusados": list(meta_flags.get("campos_recusados") or []),
     }
     gender = "f" if str(agent_gender).lower().startswith("f") else "m"

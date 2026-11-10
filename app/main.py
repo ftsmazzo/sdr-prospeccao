@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.7.7", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.7.8", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.7.7",
+        "version": "0.7.8",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
@@ -145,6 +145,68 @@ async def list_followups(request: Request):
             for j in jobs
         ],
     }
+
+
+@app.get("/admin/handoffs")
+async def list_handoffs(request: Request):
+    """Lista pedidos de encaminhamento a especialista. Header: X-Admin-Secret."""
+    if not _admin_authorized(request):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    from app.handoff_requests import list_handoff_requests
+
+    items = list_handoff_requests(get_settings())
+    return {"ok": True, "count": len(items), "handoffs": items}
+
+
+@app.get("/admin/handoffs/view", response_class=HTMLResponse)
+async def view_handoffs(request: Request):
+    """Página HTML simples para demo. Header: X-Admin-Secret."""
+    if not _admin_authorized(request):
+        return HTMLResponse("<h1>unauthorized</h1>", status_code=401)
+    from datetime import datetime, timezone
+
+    from app.handoff_requests import list_handoff_requests
+
+    items = list_handoff_requests(get_settings())
+    rows = []
+    for h in items:
+        ts = h.get("updated_at") or h.get("created_at") or 0
+        try:
+            when = datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M UTC"
+            )
+        except (TypeError, ValueError, OSError):
+            when = str(ts)
+        rows.append(
+            "<tr>"
+            f"<td>{h.get('nome') or '—'}</td>"
+            f"<td>{h.get('phone') or '—'}</td>"
+            f"<td>{h.get('motivo') or '—'}</td>"
+            f"<td>{h.get('curso') or '—'}</td>"
+            f"<td>{h.get('status') or '—'}</td>"
+            f"<td>{when}</td>"
+            "</tr>"
+        )
+    body = "\n".join(rows) or "<tr><td colspan='6'>Nenhum pedido</td></tr>"
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Handoffs — Edu SDR</title>
+<style>
+body{{font-family:Georgia,serif;margin:2rem;background:#f7f4ef;color:#1c1c1c}}
+table{{border-collapse:collapse;width:100%;background:#fff}}
+th,td{{border:1px solid #ddd;padding:.6rem;text-align:left;font-size:.95rem}}
+th{{background:#eee}}
+</style></head><body>
+<h1>Pedidos de especialista</h1>
+<p>{len(items)} registro(s)</p>
+<table>
+<thead><tr><th>Nome</th><th>Telefone</th><th>Motivo</th><th>Curso</th><th>Status</th><th>Atualizado</th></tr></thead>
+<tbody>{body}</tbody>
+</table>
+</body></html>"""
+    )
 
 
 @app.get("/admin/leads/{phone}")
