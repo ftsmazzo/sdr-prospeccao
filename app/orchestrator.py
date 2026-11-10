@@ -1662,6 +1662,7 @@ class Orchestrator:
             }
 
         # Soft deferral / callback: nunca vazar placeholder interno ao lead.
+        # Retomada SÓ se o lead pedir retorno explícito. Esquiva vaga ≠ “me chama”.
         ls_now = meta.get("lead_state") or {}
         soft_text = lead_soft_deferral(user_text)
         explicit_cb = lead_asks_explicit_callback(user_text)
@@ -1669,18 +1670,57 @@ class Orchestrator:
         obj = ls_now.get("objecao_ativa")
         if obj not in (None, "", "vou_pensar"):
             meta["soft_deferral_count"] = 0
+
+        def _door_open_reply() -> str:
+            first = (ls_now.get("nome") or push_name or "").split()
+            greet = f"{first[0]}, " if first else ""
+            return (
+                f"{greet}sem problema. Quando fizer sentido pra você, "
+                "é só me chamar aqui — fico à disposição."
+            )
+
+        def _promises_callback(text: str) -> bool:
+            return bool(
+                re.search(
+                    r"(?i)\b(te\s+chamo|volto\s+a\s+te|te\s+aviso|te\s+cobro)\b",
+                    text or "",
+                )
+            )
+
+        declined_chase = False
         if soft_text and not explicit_cb and not farewell:
             n_soft = int(meta.get("soft_deferral_count") or 0) + 1
             meta["soft_deferral_count"] = n_soft
-            if reply_looks_lazy_close(reply):
-                reply = soft_deferral_probe_reply(
-                    (ls_now.get("nome") or push_name or "")
-                )
-                logger.info("soft_deferral probe phone=%s n=%s", phone, n_soft)
-            # 1ª: só investiga. 2ª+: agenda retorno em silêncio.
-            wants_callback = n_soft >= 2
+            if n_soft <= 1:
+                # 1ª esquiva: investiga a objeção. Sem promessa de retorno.
+                if reply_looks_lazy_close(reply) or not (reply and "?" in reply):
+                    reply = soft_deferral_probe_reply(
+                        (ls_now.get("nome") or push_name or "")
+                    )
+                    logger.info("soft_deferral probe phone=%s n=%s", phone, n_soft)
+                elif _promises_callback(reply):
+                    reply = soft_deferral_probe_reply(
+                        (ls_now.get("nome") or push_name or "")
+                    )
+            else:
+                # 2ª+ sem pedido de retorno: respeita o “não por agora”.
+                declined_chase = True
+                if (
+                    reply_looks_lazy_close(reply)
+                    or _promises_callback(reply)
+                    or (reply and "?" in reply)
+                ):
+                    reply = _door_open_reply()
+                logger.info("soft_deferral respect phone=%s n=%s", phone, n_soft)
+            wants_callback = False
+        elif farewell and not explicit_cb:
+            declined_chase = True
+            wants_callback = False
         else:
             wants_callback = bool(explicit_cb)
+            # Lead voltou a conversar → libera chase pausado por esquiva anterior.
+            if meta.get("retomadas_paused") and not meta.get("opt_out"):
+                meta["retomadas_paused"] = False
 
         # Sanidade: nunca enviar texto de controle interno ao WhatsApp.
         if reply and re.search(r"(?i)modo\s*demo|[\(\[]\s*demo\s*[\)\]]", reply):
@@ -1702,6 +1742,7 @@ class Orchestrator:
                     phone, meta, get_scheduler(), user_text=user_text
                 )
                 meta["_retomada_agendada"] = True
+                meta["retomadas_paused"] = False
                 if blocked_promise_reason == "promessa_lembrete":
                     blocked_promise_reason = None
                 # Confirma retorno só se o lead pediu explicitamente e a reply
@@ -1717,6 +1758,23 @@ class Orchestrator:
                 logger.info("retomada agendada phone=%s delay=%ss", phone, int(delay))
             except Exception:  # noqa: BLE001
                 logger.exception("falha ao agendar retomada phone=%s", phone)
+        elif soft_text or declined_chase or farewell:
+            # Lead fechou o momento (ou se despediu) sem pedir retorno:
+            # cancela chase pendente e NÃO agenda silêncio do funil.
+            try:
+                from app.outbound_cadence import cancel_retomadas
+
+                cancel_retomadas(phone, get_scheduler())
+                meta["proxima_retomada_at"] = None
+                if declined_chase or farewell:
+                    meta["retomadas_paused"] = True
+                logger.info(
+                    "retomadas canceladas (declinio/esquiva) phone=%s paused=%s",
+                    phone,
+                    bool(meta.get("retomadas_paused")),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("falha ao cancelar retomadas phone=%s", phone)
         elif not meta.get("opt_out") and not meta.get("pending_contract"):
             # Reagenda silêncio do funil (qualquer reply cancela as anteriores).
             try:

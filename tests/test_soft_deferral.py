@@ -50,3 +50,10 @@ def test_farewell_with_tchau_not_blocked_by_soft_only():
     text = "tchau, até mais"
     assert lead_says_farewell_or_space(text)
     assert not lead_soft_deferral(text)
+
+
+def test_soft_decline_is_not_explicit_callback():
+    """Abandonar o momento ≠ pedir para a Clara remarcar."""
+    text = "Não. Vou esperar um momento melhor. Agora não tenho como fazer!"
+    assert lead_soft_deferral(text)
+    assert not lead_asks_explicit_callback(text)
