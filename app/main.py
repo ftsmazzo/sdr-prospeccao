@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.9.2", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.9.3", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.9.2",
+        "version": "0.9.3",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
@@ -76,6 +76,8 @@ def health():
         "webhook_secret_enforce": settings.webhook_secret_enforce,
         "inbound_debounce_seconds": settings.inbound_debounce_seconds,
         "handoff_max_objecoes": settings.handoff_max_objecoes,
+        "briefing_model": settings.briefing_model,
+        "prompt_history_messages": settings.prompt_history_messages,
         "redis": bool(settings.redis_url),
     }
 
@@ -177,6 +179,8 @@ async def view_handoffs(request: Request):
             )
         except (TypeError, ValueError, OSError):
             when = str(ts)
+        summary = (h.get("lead_summary") or {}) if isinstance(h.get("lead_summary"), dict) else {}
+        briefing = str(summary.get("briefing") or "")[:280]
         rows.append(
             "<tr>"
             f"<td>{h.get('nome') or '—'}</td>"
@@ -185,9 +189,10 @@ async def view_handoffs(request: Request):
             f"<td>{h.get('curso') or '—'}</td>"
             f"<td>{h.get('status') or '—'}</td>"
             f"<td>{when}</td>"
+            f"<td>{briefing or '—'}</td>"
             "</tr>"
         )
-    body = "\n".join(rows) or "<tr><td colspan='6'>Nenhum pedido</td></tr>"
+    body = "\n".join(rows) or "<tr><td colspan='7'>Nenhum pedido</td></tr>"
     return HTMLResponse(
         f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"/>
@@ -202,7 +207,7 @@ th{{background:#eee}}
 <h1>Pedidos de especialista</h1>
 <p>{len(items)} registro(s)</p>
 <table>
-<thead><tr><th>Nome</th><th>Telefone</th><th>Motivo</th><th>Curso</th><th>Status</th><th>Atualizado</th></tr></thead>
+<thead><tr><th>Nome</th><th>Telefone</th><th>Motivo</th><th>Curso</th><th>Status</th><th>Atualizado</th><th>Briefing</th></tr></thead>
 <tbody>{body}</tbody>
 </table>
 </body></html>"""
@@ -240,6 +245,9 @@ async def get_lead(phone: str, request: Request):
         "has_cpf": bool(meta.get("cpf")),
         "course": meta.get("course"),
         "matriculas": meta.get("matriculas") or [],
+        "compra_atual": meta.get("compra_atual"),
+        "briefing": meta.get("briefing") or "",
+        "pending_offer": meta.get("pending_offer"),
         "history_len": len(history),
         "summary": summarize_lead(meta),
     }
@@ -326,7 +334,6 @@ async def rewind_lead(phone: str, request: Request):
     meta = memory.get_meta(digits)
     ls = ensure_lead_state(meta)
     force_meta = bool(body.get("force_meta"))
-    cut_at = cut_at  # type: ignore[name-defined]
     kept = history
     if cut_at is None:
         if not force_meta:
@@ -465,6 +472,18 @@ async def _handle_evolution_webhook(request: Request, path_secret: str | None = 
     if not incoming:
         return JSONResponse({"ok": True, "ignored": True, "event": event})
 
+    from app.notify import is_internal_number, parse_notify_numbers
+
+    settings = get_settings()
+    if is_internal_number(
+        str(incoming.get("phone") or ""),
+        parse_notify_numbers(settings.handoff_notify_numbers),
+    ):
+        logger.info(
+            "webhook ignorado — número interno phone=%s", incoming.get("phone")
+        )
+        return JSONResponse({"ok": True, "ignored": True, "reason": "internal_number"})
+
     get_inbound_buffer().enqueue(
         {
             "phone": incoming["phone"],
@@ -595,6 +614,13 @@ async def checkout_confirm(token: str):
             }
         )
         meta["matriculas"] = matriculas
+        # Encerra compra_atual ativa (se houver).
+        ca = meta.get("compra_atual")
+        if isinstance(ca, dict):
+            ca["active"] = False
+            ca["aceite"] = True
+            ca["curso_escolhido"] = session.course_label
+            meta["compra_atual"] = ca
         mem.set_meta(session.phone, meta)
         welcome = (
             f"Boa notícia — matrícula confirmada na pós em {session.course_label}"
@@ -607,6 +633,23 @@ async def checkout_confirm(token: str):
             evo = EvolutionClient(settings)
             await evo.send_text(session.phone, welcome, delay_ms=0)
             mem.append(session.phone, "assistant", welcome)
+            if settings.handoff_notify_on_matricula:
+                from app.notify import (
+                    build_matricula_notify_message,
+                    notify_numbers,
+                    parse_notify_numbers,
+                )
+
+                nums = parse_notify_numbers(settings.handoff_notify_numbers)
+                note = build_matricula_notify_message(
+                    agent_name=settings.agent_name,
+                    lead_nome=aluno or ls.get("nome"),
+                    lead_phone=session.phone,
+                    curso=session.course_label,
+                )
+                await notify_numbers(
+                    evo, nums, note, exclude_phone=session.phone
+                )
         except Exception:
             logger.exception(
                 "falha ao enviar boas-vindas WhatsApp phone=%s", session.phone

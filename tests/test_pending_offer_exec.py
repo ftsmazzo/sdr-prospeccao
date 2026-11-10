@@ -89,7 +89,8 @@ def test_execute_contrato_sets_fechamento():
     reply, course, _ = orch._execute_pending_contrato(meta)
     assert meta["etapa"] == "fechamento"
     assert meta["lead_state"]["aceite_matricula"] is True
-    assert "dela/dele" in reply or "nome completo" in reply
+    assert "dela/dele" not in reply
+    assert "nome completo" in reply or "dela" in reply or "pessoa que vai estudar" in reply
     assert meta.get("pending_offer") is None
     assert course == "Autismo"
 

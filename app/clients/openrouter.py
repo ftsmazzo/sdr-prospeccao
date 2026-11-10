@@ -121,9 +121,17 @@ class OpenRouterClient:
             payload["temperature"] = temperature
         return payload
 
-    async def chat(self, messages: list[dict], temperature: float | None = 0.6) -> str:
-        """Chat livre (TTS rewrite etc.). Sem tool calling."""
+    async def chat(
+        self,
+        messages: list[dict],
+        temperature: float | None = 0.6,
+        *,
+        model: str | None = None,
+    ) -> str:
+        """Chat livre (TTS rewrite / briefing). Sem tool calling."""
         payload = self._base_payload(messages, temperature=temperature)
+        if model:
+            payload["model"] = model
         data = await self._post(payload)
         usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
         self.last_usage = dict(usage or {})

@@ -663,39 +663,85 @@ def _enrolled_course_names(meta: dict[str, Any]) -> set[str]:
 
 
 def begin_new_purchase(meta: dict[str, Any], ls: dict[str, Any]) -> None:
-    """Prepara nova compra sem apagar meta.matriculas[]."""
+    """Prepara nova compra sem apagar meta.matriculas[].
+
+    Usa compra_atual: se já houver compra ativa, preserva dados já coletados
+    (graduação/interesse do aluno) em vez de zerar a cada turno.
+    """
+    from app.compra_atual import (
+        apply_compra_atual_to_ls,
+        default_compra_atual,
+        ensure_compra_atual,
+        sync_ls_into_compra_atual,
+    )
+
     enrolled = _enrolled_course_names(meta)
-    curso = str(ls.get("curso_escolhido") or "").strip()
-    # Curso já matriculado (compra para si) não serve para a nova jornada.
-    if curso and curso in enrolled:
-        ls["curso_escolhido"] = None
-        ls["curso_recomendado"] = None
-        ls["curso_alternativo"] = None
-        ls["aceite_matricula"] = False
-    # Graduação/interesse do comprador não valem para aluno terceiro.
-    if ls.get("aluno_e_terceiro"):
-        ls["graduacao"] = None
-        ls["area_interesse"] = None
-        ls["objetivo"] = None
-        ls["aceite_matricula"] = False
+    ca = meta.get("compra_atual") if isinstance(meta.get("compra_atual"), dict) else None
+    already_active = bool(ca and ca.get("active", True) and (
+        ca.get("graduacao_aluno")
+        or ca.get("interesse_aluno")
+        or ca.get("curso_escolhido")
+        or ca.get("curso_recomendado")
+        or ca.get("aluno_e_terceiro")
+    ))
+
+    if already_active:
+        ca = ensure_compra_atual(meta)
+        # Merge flags novas (ex.: esposa) sem apagar o que já estava.
+        if ls.get("aluno_e_terceiro"):
+            ca["aluno_e_terceiro"] = True
+        if ls.get("aluno_relacao"):
+            ca["aluno_relacao"] = ls.get("aluno_relacao")
+        if ls.get("aluno_genero"):
+            ca["aluno_genero"] = ls.get("aluno_genero")
+        sync_ls_into_compra_atual(ls, ca)
+        apply_compra_atual_to_ls(ls, ca)
+    else:
+        ca = default_compra_atual()
+        ca["aluno_e_terceiro"] = bool(ls.get("aluno_e_terceiro"))
+        ca["aluno_relacao"] = ls.get("aluno_relacao")
+        ca["aluno_genero"] = ls.get("aluno_genero")
+        ca["aluno_nome"] = ls.get("aluno_nome")
+        # Curso já matriculado (compra para si) não serve para a nova jornada.
+        curso = str(ls.get("curso_escolhido") or "").strip()
+        if curso and curso in enrolled:
+            ls["curso_escolhido"] = None
+            ls["curso_recomendado"] = None
+            ls["curso_alternativo"] = None
+            ls["aceite_matricula"] = False
+        # Graduação/interesse do COMPRADOR não valem para aluno terceiro — só na 1ª abertura.
+        if ca["aluno_e_terceiro"]:
+            ls["graduacao"] = None
+            ls["area_interesse"] = None
+            ls["objetivo"] = None
+            ls["aceite_matricula"] = False
+            ls["curso_escolhido"] = None
+            ls["curso_recomendado"] = None
+        meta["compra_atual"] = ca
+        sync_ls_into_compra_atual(ls, ca)
+
     meta["pending_contract"] = False
     meta["contract_sent"] = False
     meta["_reopen_purchase"] = True
     meta["lead_state"] = ls
     # Sai de matriculado imediatamente (prompt + gates usam a etapa atual).
     if meta.get("etapa") == "matriculado":
-        if (
-            ls.get("graduacao") == "concluida"
-            and ls.get("curso_escolhido")
-            and ls.get("aceite_matricula")
-        ):
+        grad = ls.get("graduacao") or (ca or {}).get("graduacao_aluno")
+        curso_ok = ls.get("curso_escolhido") or (ca or {}).get("curso_escolhido")
+        interesse = ls.get("area_interesse") or (ca or {}).get("interesse_aluno")
+        aceite = bool(ls.get("aceite_matricula") or (ca or {}).get("aceite"))
+        if grad == "concluida" and curso_ok and aceite:
             meta["etapa"] = "fechamento"
-        elif ls.get("graduacao") == "concluida" and (
-            ls.get("curso_escolhido") or ls.get("area_interesse")
-        ):
+            if ca:
+                ca["etapa"] = "fechamento"
+        elif grad == "concluida" and (curso_ok or interesse):
             meta["etapa"] = "recomendacao"
+            if ca:
+                ca["etapa"] = "recomendacao"
         else:
             meta["etapa"] = "qualificacao"
+            if ca:
+                ca["etapa"] = "qualificacao"
         meta["objecoes_sem_avanco"] = 0
 
 

@@ -19,7 +19,13 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     # Padrão demo-v2. Alternativa mais barata: openai/gpt-4.1-mini (só trocar OPENROUTER_MODEL).
     openrouter_model: str = "anthropic/claude-sonnet-5"
+    briefing_model: str = "openai/gpt-4.1-mini"
     stt_model: str = "openai/whisper-1"
+    # Histórico bruto no prompt (Redis guarda memory_max_messages).
+    prompt_history_messages: int = 12
+    # WhatsApp: números internos que recebem notificação de handoff/matrícula
+    handoff_notify_numbers: str = "5516996282630"
+    handoff_notify_on_matricula: bool = True
 
     evolution_base_url: str = ""
     evolution_api_key: str = ""

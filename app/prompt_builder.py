@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.compra_atual import format_compra_atual_block, format_matriculas_block
 from app.knowledge import load_conhecimento_lead, load_cursos, load_precos, load_regras
 
 _ETAPAS_SEM_CATALOGO = frozenset({"aluno_atual", "nao_elegivel"})
@@ -45,7 +46,8 @@ Sempre chame a ferramenta `responder` com:
   },
   "action": null,
   "action_data": {},
-  "offer": null
+  "offer": null,
+  "resposta_a_oferta": null
 }
 
 Regras do state_update:
@@ -68,9 +70,17 @@ Regras do state_update:
 - Concordância de gênero pelo nome/pronomes do lead; na dúvida: "quando você quiser"
 - WhatsApp: texto corrido, sem listas
 
-offer (quando a reply TERMINA oferecendo algo que o sistema executa no próximo "sim"):
+offer (OBRIGATÓRIO quando a reply TERMINA oferecendo algo executável no próximo aceite):
+- Sempre preencha offer se a mensagem oferece contrato, matrícula, encaminhamento a especialista ou resumo.
 - {"type":"contrato"} | {"type":"encaminhamento","motivo":"..."} | {"type":"resumo"} | null
 - Nunca ofereça o que o código não executa.
+- offer é a fonte principal; o código só infere da reply se você esquecer.
+
+resposta_a_oferta (quando o sistema avisou que há oferta pendente):
+- "aceitou" | "recusou" | "outro_assunto" | null
+- "aceitou": Adoraria, bora, manda, fechado, quero sim, pode, claro, ok...
+- "recusou": não quero, depois, não precisa...
+- "outro_assunto": mudou de tema sem aceitar nem recusar
 """
 
 
@@ -175,8 +185,25 @@ def build_system_prompt_parts(
         "handoff_registrado": bool(meta_flags.get("handoff_registrado")),
         "campos_recusados": list(meta_flags.get("campos_recusados") or []),
         "matriculas": list(meta_flags.get("matriculas") or []),
+        "compra_atual": meta_flags.get("compra_atual"),
+        "pending_offer": meta_flags.get("pending_offer"),
     }
+    briefing = str(meta_flags.get("briefing") or "").strip()
+    briefing_block = ""
+    if briefing:
+        briefing_block = (
+            "## Briefing da conversa (continuidade)\n"
+            "Use este resumo para dar continuidade. Nunca pergunte de novo o que já "
+            "está aqui. Em caso de conflito, lead_state/compra_atual prevalece.\n"
+            f"{briefing}\n\n"
+        )
+    compra_blocks = (
+        f"{format_matriculas_block(meta_flags.get('matriculas'))}\n"
+        f"{format_compra_atual_block(meta_flags.get('compra_atual'))}\n\n"
+    )
     variable = (
+        f"{briefing_block}"
+        f"{compra_blocks}"
         "## Estado atual do lead (somente leitura; atualize via state_update)\n"
         f"{json.dumps(state_view, ensure_ascii=False, indent=2)}\n"
     )

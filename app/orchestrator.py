@@ -62,8 +62,20 @@ from app.handoff_requests import (
     lead_refuses_handoff,
     register_handoff_request,
 )
+from app.briefing import refresh_briefing
+from app.compra_atual import (
+    ensure_compra_atual,
+    sync_ls_into_compra_atual,
+)
+from app.notify import (
+    build_handoff_notify_message,
+    is_internal_number,
+    notify_numbers,
+    parse_notify_numbers,
+)
 from app.offers import (
     apply_third_person_flags,
+    classify_offer_response_fallback,
     contract_data_request_reply,
     detect_third_person_student,
     infer_offer_from_reply,
@@ -701,22 +713,111 @@ class Orchestrator:
                 "objetivo": ls.get("objetivo"),
                 "curso_escolhido": ls.get("curso_escolhido"),
                 "etapa": meta.get("etapa"),
+                "briefing": meta.get("briefing") or "",
+                "compra_atual": meta.get("compra_atual"),
             },
             settings=self.settings,
         )
         meta["handoff_request_id"] = record.get("id")
         meta["handoff_registrado"] = True
         meta["_handoff_registered_this_turn"] = True
+        # Notifica especialistas (falha não afeta o lead).
+        try:
+            asyncio.create_task(
+                self._notify_handoff_specialists(
+                    phone=phone,
+                    meta=meta,
+                    motivo=motivo or meta.get("handoff_reason") or "geral",
+                    push_name=push_name,
+                ),
+                name=f"notify-handoff-{phone[-4:]}",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("agendar notify handoff falhou phone=%s", phone)
         return record
 
     def _save_pending_offer(self, meta: dict, agent: AgentResponse) -> None:
+        """Fonte principal: offer no JSON. infer_offer_from_reply só como reserva."""
         offer = normalize_offer(agent.offer.model_dump() if agent.offer else None)
+        source = "json"
         if not offer:
             offer = infer_offer_from_reply(agent.reply or "")
+            source = "infer_reply"
         if offer:
             offer["created_turn"] = int(meta.get("turn_count") or 0)
             meta["pending_offer"] = offer
-            logger.info("pending_offer gravada type=%s", offer.get("type"))
+            if source == "infer_reply":
+                logger.info(
+                    "pending_offer gravada type=%s source=infer_reply (modelo omitiu offer)",
+                    offer.get("type"),
+                )
+            else:
+                logger.info("pending_offer gravada type=%s source=json", offer.get("type"))
+        else:
+            logger.info("pending_offer ausente (sem offer JSON e infer falhou)")
+
+    def _schedule_briefing_refresh(self, phone: str) -> None:
+        """Atualiza meta.briefing em segundo plano (não atrasa a resposta)."""
+
+        async def _run() -> None:
+            try:
+                meta = self.memory.get_meta(phone)
+                history = self.memory.get_history(phone)
+                previous = str(meta.get("briefing") or "")
+                model = getattr(self.settings, "briefing_model", None) or "openai/gpt-4.1-mini"
+                new_b = await refresh_briefing(
+                    self.llm,
+                    previous=previous,
+                    recent_messages=history[-8:],
+                    matriculas=list(meta.get("matriculas") or []),
+                    model=model,
+                )
+                meta = self.memory.get_meta(phone)
+                meta["briefing"] = new_b
+                self.memory.set_meta(phone, meta)
+                logger.info("briefing atualizado phone=%s chars=%s", phone, len(new_b or ""))
+            except Exception:  # noqa: BLE001
+                logger.exception("briefing background falhou phone=%s", phone)
+
+        try:
+            asyncio.create_task(_run(), name=f"briefing-{phone[-4:]}")
+        except Exception:  # noqa: BLE001
+            logger.exception("não foi possível agendar briefing phone=%s", phone)
+
+    async def _notify_handoff_specialists(
+        self,
+        *,
+        phone: str,
+        meta: dict,
+        motivo: str,
+        push_name: str = "",
+    ) -> None:
+        numbers = parse_notify_numbers(
+            getattr(self.settings, "handoff_notify_numbers", "") or ""
+        )
+        if not numbers:
+            return
+        ls = meta.get("lead_state") or {}
+        ca = meta.get("compra_atual") if isinstance(meta.get("compra_atual"), dict) else {}
+        msg = build_handoff_notify_message(
+            agent_name=self.settings.agent_name,
+            lead_nome=ls.get("nome") or push_name,
+            lead_phone=phone,
+            motivo=motivo,
+            curso=(
+                ls.get("curso_escolhido")
+                or ls.get("curso_recomendado")
+                or (ca or {}).get("curso_escolhido")
+            ),
+            etapa=str(meta.get("etapa") or ""),
+            briefing=str(meta.get("briefing") or ""),
+        )
+        try:
+            await notify_numbers(
+                self.evo, numbers, msg, exclude_phone=phone
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("notify handoff falhou phone=%s", phone)
 
     def _execute_pending_contrato(
         self, meta: dict, *, push_name: str = ""
@@ -988,6 +1089,14 @@ class Orchestrator:
             await self.evo.send_text(phone, reply, delay_ms=0)
             return reply
 
+        # Números internos (especialistas) não abrem funil de venda.
+        notify_nums = parse_notify_numbers(
+            getattr(self.settings, "handoff_notify_numbers", "") or ""
+        )
+        if is_internal_number(phone, notify_nums):
+            logger.info("mensagem de número interno ignorada phone=%s", phone)
+            return ""
+
         meta = self.memory.get_meta(phone)
         ls = ensure_lead_state(meta)
         if push_name and not ls.get("nome"):
@@ -1024,47 +1133,8 @@ class Orchestrator:
         has_media = bool(has_image or has_document)
         agent: AgentResponse | None = None
 
-        # 1) Executar pending_offer no código quando o lead afirma.
-        if pending:
-            otype = str(pending.get("type") or "")
-            refuses = lead_refuses_offer(user_text) or (
-                otype == "encaminhamento" and lead_refuses_handoff(user_text)
-            )
-            affirms = lead_affirms_offer(user_text) or (
-                otype == "encaminhamento" and lead_accepts_specialist(user_text)
-            )
-            if refuses:
-                meta.pop("pending_offer", None)
-                pending = None
-            elif affirms:
-                if otype == "contrato":
-                    reply, course, delivery_ran = self._execute_pending_contrato(
-                        meta, push_name=push_name
-                    )
-                    force_skip_finalize = True
-                    logger.info("pending_offer executada type=contrato phone=%s", phone)
-                elif otype == "encaminhamento":
-                    reply, course, delivery_ran = self._execute_pending_encaminhamento(
-                        phone,
-                        meta,
-                        push_name=push_name,
-                        motivo=str(pending.get("motivo") or "especialista"),
-                    )
-                    just_entered_handoff = meta.get("etapa") == "handoff_humano"
-                    force_skip_finalize = True
-                    logger.info(
-                        "pending_offer executada type=encaminhamento phone=%s", phone
-                    )
-                elif otype == "resumo":
-                    meta.pop("pending_offer", None)
-                    write_resumo_now = True
-                else:
-                    meta.pop("pending_offer", None)
-                    pending = None
-            else:
-                # Sem afirmação → oferta expira (1 turno).
-                meta.pop("pending_offer", None)
-                pending = None
+        # pending_offer: classificação no LLM (resposta_a_oferta); não expira por 1 turno.
+        pending_executed = False
 
         # "Vc registrou?" — resposta baseada no registro real, sem LLM se possível.
         if (
@@ -1105,12 +1175,18 @@ class Orchestrator:
                     "handoff_registrado": meta.get("handoff_registrado"),
                     "campos_recusados": meta.get("campos_recusados") or [],
                     "matriculas": meta.get("matriculas") or [],
+                    "compra_atual": meta.get("compra_atual"),
+                    "pending_offer": pending,
+                    "briefing": meta.get("briefing"),
                 },
                 agent_name=self.settings.agent_name,
                 agent_gender=self.settings.agent_gender,
                 facts_block=facts_block or "",
             )
-            history = self.memory.get_history(phone)
+            hist_limit = int(
+                getattr(self.settings, "prompt_history_messages", 12) or 12
+            )
+            history = self.memory.get_history(phone)[-hist_limit:]
             messages = [build_cached_system_message(fixed, variable)]
             if push_name and not history:
                 messages.append(
@@ -1136,6 +1212,19 @@ class Orchestrator:
                         "content": (
                             "O lead enviou imagem/documento NESTE turno. "
                             "Só agora você pode confirmar o recebimento."
+                        ),
+                    }
+                )
+            if pending:
+                otype = str(pending.get("type") or "oferta")
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            f"Há oferta PENDENTE do turno anterior: type={otype}. "
+                            "Classifique a mensagem do lead em resposta_a_oferta: "
+                            '"aceitou" | "recusou" | "outro_assunto". '
+                            "Adoraria/bora/manda/fechado/quero sim = aceitou."
                         ),
                     }
                 )
@@ -1169,6 +1258,11 @@ class Orchestrator:
                 canon = resolve_catalog_name(str(ls["curso_escolhido"]))
                 if canon:
                     ls["curso_escolhido"] = canon
+            # Sync compra_atual ↔ lead_state
+            ca = ensure_compra_atual(meta)
+            sync_ls_into_compra_atual(ls, ca)
+            ca["etapa"] = meta.get("etapa") or ca.get("etapa")
+            meta["compra_atual"] = ca
             meta["lead_state"] = ls
             advance_etapa(meta, handoff_max_objecoes=self.settings.handoff_max_objecoes)
             meta.pop("_reopen_purchase", None)
@@ -1180,33 +1274,111 @@ class Orchestrator:
                     "handoff_humano phone=%s summary=%s", phone, summarize_lead(meta)
                 )
 
-            reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
-                phone,
-                meta,
-                agent,
-                push_name,
-                user_text=user_text,
-                last_assistant=last_assistant,
-            )
+            # Classifica resposta à oferta pendente (modelo → lexical).
+            if pending and not pending_executed:
+                rao = agent.resposta_a_oferta
+                if rao is None:
+                    # encaminhamento: também aceita lead_accepts_specialist
+                    otype = str(pending.get("type") or "")
+                    if otype == "encaminhamento" and lead_accepts_specialist(user_text):
+                        rao = "aceitou"
+                    elif otype == "encaminhamento" and lead_refuses_handoff(user_text):
+                        rao = "recusou"
+                    else:
+                        rao = classify_offer_response_fallback(user_text)
+                        if rao:
+                            logger.info(
+                                "resposta_a_oferta fallback lexical=%s phone=%s",
+                                rao,
+                                phone,
+                            )
+                else:
+                    logger.info(
+                        "resposta_a_oferta modelo=%s phone=%s", rao, phone
+                    )
+                otype = str(pending.get("type") or "")
+                if rao == "aceitou":
+                    if otype == "contrato":
+                        reply, course, delivery_ran = self._execute_pending_contrato(
+                            meta, push_name=push_name
+                        )
+                        pending_executed = True
+                        logger.info(
+                            "pending_offer executada type=contrato phone=%s", phone
+                        )
+                    elif otype == "encaminhamento":
+                        reply, course, delivery_ran = (
+                            self._execute_pending_encaminhamento(
+                                phone,
+                                meta,
+                                push_name=push_name,
+                                motivo=str(pending.get("motivo") or "especialista"),
+                            )
+                        )
+                        just_entered_handoff = meta.get("etapa") == "handoff_humano"
+                        pending_executed = True
+                        logger.info(
+                            "pending_offer executada type=encaminhamento phone=%s",
+                            phone,
+                        )
+                    elif otype == "resumo":
+                        meta.pop("pending_offer", None)
+                        write_resumo_now = True
+                        # reusa reply do modelo se já veio resumo; senão agent.reply
+                        reply = (agent.reply or "").strip() or reply
+                    else:
+                        meta.pop("pending_offer", None)
+                elif rao in ("recusou", "outro_assunto"):
+                    meta.pop("pending_offer", None)
+                    logger.info(
+                        "pending_offer expirada motivo=%s phone=%s", rao, phone
+                    )
+                # rao None → mantém pending_offer
+
+            if not pending_executed:
+                reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
+                    phone,
+                    meta,
+                    agent,
+                    push_name,
+                    user_text=user_text,
+                    last_assistant=last_assistant,
+                )
+                # Grava offer para o próximo turno (antes do áudio/TTS).
+                self._save_pending_offer(meta, agent)
+            else:
+                blocked_promise_reason = None
+                self.last_reply_diag = {
+                    "regen": False,
+                    "regen_reason": None,
+                    "stock": False,
+                    "stock_reason": None,
+                    "stock_text": None,
+                    "pending_offer_executed": True,
+                }
+
             if meta.get("_handoff_registered_this_turn"):
                 just_entered_handoff = (
                     just_entered_handoff or meta.get("etapa") == "handoff_humano"
                 )
-            # Grava offer para o próximo turno (após a reply que oferece).
-            self._save_pending_offer(meta, agent)
 
-            reply = await self._finalize_reply(
-                phone=phone,
-                meta=meta,
-                messages=messages,
-                reply=reply,
-                course=course,
-                blocked_promise_reason=blocked_promise_reason,
-                delivery_ran=delivery_ran,
-                has_media=has_media,
-                just_entered_handoff=just_entered_handoff,
-                user_text=user_text,
-            )
+            if not pending_executed:
+                reply = await self._finalize_reply(
+                    phone=phone,
+                    meta=meta,
+                    messages=messages,
+                    reply=reply,
+                    course=course,
+                    blocked_promise_reason=blocked_promise_reason,
+                    delivery_ran=delivery_ran,
+                    has_media=has_media,
+                    just_entered_handoff=just_entered_handoff,
+                    user_text=user_text,
+                )
+            elif not (reply or "").strip():
+                reply = (agent.reply or "").strip() or (
+                    "Me conta o que você precisa agora?"
+                )
         else:
             self.last_reply_diag = {
                 "regen": False,
@@ -1221,6 +1393,7 @@ class Orchestrator:
 
         self.memory.append(phone, "user", user_text)
         self.memory.append(phone, "assistant", reply)
+        self._schedule_briefing_refresh(phone)
 
         want_audio = self._should_reply_audio(
             phone=phone,

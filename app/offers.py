@@ -9,11 +9,12 @@ OfferType = Literal["contrato", "encaminhamento", "resumo"]
 
 _AFFIRM_RE = re.compile(
     r"(?i)\b("
-    r"sim\b|pode\b|gostaria|quero|faz\s+isso|faz\s+aí|faz\s+ai"
+    r"sim\b|pode\b|gostaria|adoraria|quero|bora|fechado|manda\b"
+    r"|faz\s+isso|faz\s+aí|faz\s+ai"
     r"|registra(?:r)?|anota(?:r)?|encaminha(?:r)?"
     r"|manda(?:r)?|envie|envia|manda\s+sim|pode\s+sim"
     r"|claro|isso|beleza|ok\b|pode\s+ser|pode\s+mandar"
-    r"|me\s+envia|me\s+manda"
+    r"|me\s+envia|me\s+manda|quero\s+sim|vamos"
     r")\b"
 )
 
@@ -59,9 +60,19 @@ _NEW_PURCHASE_RE = re.compile(
 
 
 def lead_affirms_offer(text: str) -> bool:
+    """Reserva lexical — preferir resposta_a_oferta do modelo."""
     if lead_refuses_offer(text):
         return False
     return bool(_AFFIRM_RE.search(text or ""))
+
+
+def classify_offer_response_fallback(text: str) -> str | None:
+    """Fallback lexical: aceitou | recusou | None (indefinido)."""
+    if lead_refuses_offer(text):
+        return "recusou"
+    if lead_affirms_offer(text):
+        return "aceitou"
+    return None
 
 
 def lead_refuses_offer(text: str) -> bool:
@@ -121,6 +132,9 @@ _OFFER_CONTRATO_RE = re.compile(
     r"|envi(?:ar|e|o)\s+(?:o\s+)?contrato"
     r"|gerar\s+(?:o\s+)?contrato"
     r"|manda(?:r)?\s+(?:o\s+)?contrato"
+    r"|(?:preparar|gerar|seguir\s+com|fechar)\s+(?:a\s+)?matr[ií]cula"
+    r"|quer\s+(?:que\s+(?:eu\s+)?)?(?:prepare|gere|mande)\s+(?:o\s+)?contrato"
+    r"|quer\s+seguir\s+com\s+a\s+matr[ií]cula"
     r")\b"
 )
 _OFFER_HANDOFF_RE = re.compile(

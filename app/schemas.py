@@ -13,6 +13,7 @@ logger = logging.getLogger("edu.schemas")
 
 ActionType = Literal["LEAD_DATA", "FOLLOWUP_DOC", "CHECKOUT_READY", "REGISTER_HANDOFF"]
 OfferType = Literal["contrato", "encaminhamento", "resumo"]
+RespostaOferta = Literal["aceitou", "recusou", "outro_assunto"]
 
 NEUTRAL_REPLY = "Só um instante, me confirma de novo o que você precisa?"
 
@@ -28,6 +29,7 @@ class AgentResponse(BaseModel):
     action: ActionType | None = None
     action_data: dict[str, Any] = Field(default_factory=dict)
     offer: OfferPayload | None = None
+    resposta_a_oferta: RespostaOferta | None = None
 
 
 RESPONDER_TOOL: dict[str, Any] = {
@@ -66,6 +68,15 @@ RESPONDER_TOOL: dict[str, Any] = {
                                 "motivo": {"type": ["string", "null"]},
                             },
                             "required": ["type"],
+                        },
+                        {"type": "null"},
+                    ]
+                },
+                "resposta_a_oferta": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "enum": ["aceitou", "recusou", "outro_assunto"],
                         },
                         {"type": "null"},
                     ]

@@ -23,6 +23,7 @@ def test_infer_contrato_and_handoff():
 def test_affirm_and_refuse():
     assert lead_affirms_offer("Sim")
     assert lead_affirms_offer("Gostaria")
+    assert lead_affirms_offer("Adoraria")
     assert lead_refuses_offer("não quero agora")
     assert not lead_affirms_offer("não quero agora")
 
