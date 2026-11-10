@@ -67,6 +67,10 @@ from app.compra_atual import (
     ensure_compra_atual,
     sync_ls_into_compra_atual,
 )
+from app.lead_data import (
+    apply_extracted_contract_fields,
+    extract_contract_fields_from_text,
+)
 from app.notify import (
     build_handoff_notify_message,
     is_internal_number,
@@ -83,6 +87,7 @@ from app.offers import (
     lead_asks_if_registered,
     lead_refuses_offer,
     lead_wants_new_purchase,
+    missing_contract_fields,
     normalize_offer,
 )
 from app.veracity import (
@@ -588,25 +593,26 @@ class Orchestrator:
                     or ls.get("area_interesse")
                     or "especialista"
                 )
+                # Dúvida pontual: registra em paralelo SEM mudar a etapa do funil.
+                # handoff_humano fica só para advance_etapa (desconto, jurídico, irritado…).
                 self._register_handoff_now(
                     phone=phone,
                     meta=meta,
                     motivo=motivo,
                     push_name=push_name,
                 )
-                if meta.get("etapa") != "handoff_humano":
-                    if ls.get("e_aluno_atual") or meta.get("etapa") == "aluno_atual":
-                        meta["etapa"] = "aluno_atual"
-                        meta["handoff_reason"] = meta.get("handoff_reason") or "suporte_aluno"
-                    else:
-                        enter_handoff(meta, motivo if motivo != "especialista" else "especialista")
                 meta["handoff_avisado"] = True
                 if not re.search(r"(?i)\bregistrei\b", reply or ""):
                     reply = handoff_registered_reply(
                         nome=ls.get("nome") or push_name or None,
                         motivo=motivo,
                     )
-                logger.info("REGISTER_HANDOFF ok phone=%s motivo=%s", phone, motivo)
+                logger.info(
+                    "REGISTER_HANDOFF ok phone=%s motivo=%s etapa=%s",
+                    phone,
+                    motivo,
+                    meta.get("etapa"),
+                )
 
         elif action == "LEAD_DATA":
             full_name = str(data.get("full_name") or "").strip()
@@ -630,14 +636,7 @@ class Orchestrator:
             birth = str(data.get("birth_date") or meta.get("birth_date") or "").strip()
             if not (full_name and cpf and birth):
                 logger.warning("FOLLOWUP_DOC sem dados phone=%s", phone)
-                if "cpf" not in reply.lower() and "nome completo" not in reply.lower():
-                    reply = (
-                        f"{reply}\n\n"
-                        "Pra adiantar o contrato, me manda por escrito: "
-                        "nome completo, CPF e data de nascimento. "
-                        "Depois que fecharmos, você envia a documentação "
-                        "(RG ou CNH, diploma ou declaração, histórico e certidão)."
-                    )
+                reply = contract_data_request_reply(meta, ls)
             else:
                 meta["full_name"] = full_name
                 meta["cpf"] = cpf
@@ -819,8 +818,60 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             logger.exception("notify handoff falhou phone=%s", phone)
 
+    def _schedule_contract_if_ready(
+        self,
+        phone: str,
+        meta: dict,
+        *,
+        push_name: str = "",
+    ) -> tuple[str, str | None, bool]:
+        """Agenda FOLLOWUP_DOC se curso + 3 dados estiverem prontos."""
+        ls = ensure_lead_state(meta)
+        if missing_contract_fields(meta, ls):
+            return "", None, False
+        if meta.get("pending_contract") or meta.get("contract_sent"):
+            return "", None, False
+        raw_course = str(
+            ls.get("curso_escolhido")
+            or ls.get("curso_recomendado")
+            or meta.get("course")
+            or ""
+        ).strip()
+        course = resolve_catalog_name(raw_course) or raw_course
+        full_name = str(
+            meta.get("full_name")
+            or ls.get("aluno_nome")
+            or ls.get("nome")
+            or push_name
+            or ""
+        ).strip()
+        cpf = str(meta.get("cpf") or "")
+        birth = str(meta.get("birth_date") or "")
+        if not (phone and full_name and cpf and birth and course):
+            return "", None, False
+        get_scheduler().schedule_document(
+            phone=phone,
+            lead_name=full_name,
+            cpf=cpf,
+            birth_date=birth,
+            course=course,
+            with_checkout=True,
+        )
+        meta["pending_contract"] = True
+        meta["course"] = course
+        meta["full_name"] = full_name
+        if course:
+            ls["curso_escolhido"] = course
+        meta["lead_state"] = ls
+        reply = (
+            "Perfeito — com seus dados eu já estou preparando o contrato "
+            "e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+        )
+        logger.info("contrato agendado (dados completos) phone=%s course=%s", phone, course)
+        return reply, course, True
+
     def _execute_pending_contrato(
-        self, meta: dict, *, push_name: str = ""
+        self, meta: dict, *, push_name: str = "", phone: str = ""
     ) -> tuple[str, str | None, bool]:
         ls = ensure_lead_state(meta)
         curso = ls.get("curso_escolhido") or ls.get("curso_recomendado") or ""
@@ -832,9 +883,23 @@ class Orchestrator:
         meta["etapa"] = "fechamento"
         meta["objecoes_sem_avanco"] = 0
         meta.pop("pending_offer", None)
+
+        course_out = canon or (str(curso) if curso else None)
+        if phone:
+            reply, scheduled_course, delivery = self._schedule_contract_if_ready(
+                phone, meta, push_name=push_name
+            )
+            if delivery:
+                return reply, scheduled_course or course_out, True
+        if not missing_contract_fields(meta, ls):
+            # Sem phone (teste unitário) mas dados completos — não pedir de novo.
+            reply = (
+                "Perfeito — com seus dados eu já estou preparando o contrato "
+                "e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+            )
+            return reply, course_out, bool(phone)
         reply = contract_data_request_reply(meta, ls)
-        # FOLLOWUP_DOC só com os 3 dados — aqui só pedimos o que falta.
-        return reply, canon or (str(curso) if curso else None), False
+        return reply, course_out, False
 
     def _execute_pending_encaminhamento(
         self,
@@ -846,23 +911,10 @@ class Orchestrator:
     ) -> tuple[str, None, bool]:
         ls = ensure_lead_state(meta)
         why = motivo or meta.get("handoff_reason") or "especialista"
+        # Encaminhamento de dúvida: NÃO muda a etapa do funil.
         self._register_handoff_now(
             phone=phone, meta=meta, motivo=why, push_name=push_name
         )
-        if meta.get("etapa") != "handoff_humano":
-            if ls.get("e_aluno_atual") or meta.get("etapa") in (
-                "aluno_atual",
-                "matriculado",
-                "contrato_enviado",
-            ):
-                meta["etapa"] = (
-                    "aluno_atual"
-                    if ls.get("e_aluno_atual") or meta.get("etapa") == "aluno_atual"
-                    else meta.get("etapa") or "matriculado"
-                )
-                meta["handoff_reason"] = meta.get("handoff_reason") or why
-            else:
-                enter_handoff(meta, why if why != "especialista" else "especialista")
         meta["handoff_avisado"] = True
         meta.pop("pending_offer", None)
         reply = handoff_registered_reply(
@@ -1119,6 +1171,17 @@ class Orchestrator:
             logger.info("reabre funil a partir de matriculado phone=%s", phone)
         meta["lead_state"] = ls
 
+        # Extrai dados pessoais ANTES de oferta pendente / LLM.
+        extracted = extract_contract_fields_from_text(user_text)
+        if extracted:
+            apply_extracted_contract_fields(meta, ls, extracted)
+            ls = meta.get("lead_state") or ls
+            logger.info(
+                "dados pessoais extraídos phone=%s keys=%s",
+                phone,
+                sorted(extracted.keys()),
+            )
+
         etapa_antes = meta.get("etapa") or "abertura"
         pending = meta.get("pending_offer") if isinstance(meta.get("pending_offer"), dict) else None
         force_skip_finalize = False
@@ -1135,6 +1198,53 @@ class Orchestrator:
 
         # pending_offer: classificação no LLM (resposta_a_oferta); não expira por 1 turno.
         pending_executed = False
+
+        # Dados completos nesta mensagem → agenda (aceite implícito se oferta pendente).
+        if (
+            extracted
+            and not meta.get("pending_contract")
+            and not meta.get("contract_sent")
+            and not missing_contract_fields(meta, ls)
+            and (
+                meta.get("etapa") == "fechamento"
+                or ls.get("aceite_matricula")
+                or (pending and str(pending.get("type") or "") == "contrato")
+            )
+        ):
+            if pending and str(pending.get("type") or "") == "contrato":
+                reply, course, delivery_ran = self._execute_pending_contrato(
+                    meta, push_name=push_name, phone=phone
+                )
+                pending_executed = True
+                force_skip_finalize = True
+                self.last_reply_diag = {
+                    "regen": False,
+                    "regen_reason": None,
+                    "stock": False,
+                    "stock_reason": None,
+                    "stock_text": None,
+                    "pending_offer_executed": True,
+                    "contract_scheduled_from_extract": True,
+                }
+            else:
+                sched_reply, sched_course, scheduled = self._schedule_contract_if_ready(
+                    phone, meta, push_name=push_name
+                )
+                if scheduled:
+                    reply = sched_reply
+                    course = sched_course
+                    delivery_ran = True
+                    force_skip_finalize = True
+                    pending_executed = True
+                    self.last_reply_diag = {
+                        "regen": False,
+                        "regen_reason": None,
+                        "stock": False,
+                        "stock_reason": None,
+                        "stock_text": None,
+                        "pending_offer_executed": False,
+                        "contract_scheduled_from_extract": True,
+                    }
 
         # "Vc registrou?" — resposta baseada no registro real, sem LLM se possível.
         if (
@@ -1300,7 +1410,7 @@ class Orchestrator:
                 if rao == "aceitou":
                     if otype == "contrato":
                         reply, course, delivery_ran = self._execute_pending_contrato(
-                            meta, push_name=push_name
+                            meta, push_name=push_name, phone=phone
                         )
                         pending_executed = True
                         logger.info(
@@ -1404,6 +1514,7 @@ class Orchestrator:
         if want_audio:
             try:
                 allow_tags = self._allow_expression_tags(meta, reply, lead_irritado_turn)
+                ls_audio = meta.get("lead_state") or {}
                 spoken = await to_spoken_script(
                     self.llm,
                     reply,
@@ -1411,6 +1522,10 @@ class Orchestrator:
                     agent_gender=self.settings.agent_gender,
                     allow_expression_tags=allow_tags,
                     last_audio_opening=str(meta.get("last_audio_opening") or ""),
+                    lead_name=str(
+                        ls_audio.get("nome") or meta.get("full_name") or push_name or ""
+                    ),
+                    aluno_nome=str(ls_audio.get("aluno_nome") or ""),
                 )
                 if not self._spoken_passes_gate(
                     spoken,

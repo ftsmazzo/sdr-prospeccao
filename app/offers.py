@@ -182,6 +182,41 @@ def lead_asks_if_registered(text: str) -> bool:
     return bool(_ASKS_REGISTERED_RE.search(text or ""))
 
 
+def _format_need_phrases(missing: list[str], *, whose: str) -> str:
+    """Monta 'o seu CPF e a sua data de nascimento' (nunca 'data de nascimento seu')."""
+    phrases: list[str] = []
+    for item in missing:
+        key = item.casefold()
+        if key == "nome completo":
+            if whose == "seu":
+                phrases.append("o seu nome completo")
+            elif whose in ("dela", "dele"):
+                phrases.append(f"o nome completo {whose}")
+            else:
+                phrases.append("o nome completo")
+        elif key == "cpf":
+            if whose == "seu":
+                phrases.append("o seu CPF")
+            elif whose in ("dela", "dele"):
+                phrases.append(f"o CPF {whose}")
+            else:
+                phrases.append("o CPF")
+        elif "nascimento" in key:
+            if whose == "seu":
+                phrases.append("a sua data de nascimento")
+            elif whose in ("dela", "dele"):
+                phrases.append(f"a data de nascimento {whose}")
+            else:
+                phrases.append("a data de nascimento")
+        else:
+            phrases.append(item)
+    if len(phrases) == 1:
+        return phrases[0]
+    if len(phrases) == 2:
+        return f"{phrases[0]} e {phrases[1]}"
+    return f"{phrases[0]}, {phrases[1]} e {phrases[2]}"
+
+
 def contract_data_request_reply(meta: dict[str, Any], ls: dict[str, Any]) -> str:
     """Pede só o que falta para gerar o contrato (gênero resolvido)."""
     third = bool(ls.get("aluno_e_terceiro"))
@@ -189,35 +224,31 @@ def contract_data_request_reply(meta: dict[str, Any], ls: dict[str, Any]) -> str
     rel = (ls.get("aluno_relacao") or "").strip().casefold()
     gen = (ls.get("aluno_genero") or "").strip().casefold()
 
-    missing = missing_contract_fields(meta, ls) or [
-        "nome completo",
-        "CPF",
-        "data de nascimento",
-    ]
-    if len(missing) == 1:
-        need = missing[0]
-    elif len(missing) == 2:
-        need = f"{missing[0]} e {missing[1]}"
-    else:
-        need = f"{missing[0]}, {missing[1]} e {missing[2]}"
+    missing = missing_contract_fields(meta, ls)
+    if not missing:
+        return (
+            "Perfeito — com os dados em mãos eu já preparo o contrato e te mando "
+            "por aqui em alguns minutinhos."
+        )
 
     if not third and not aluno:
+        need = _format_need_phrases(missing, whose="seu")
         return (
-            f"Perfeito! Pra eu gerar o contrato, me passa o {need} seu. "
+            f"Perfeito! Pra eu gerar o contrato, me passa {need}. "
             "Você lê o contrato com calma antes de confirmar qualquer pagamento."
         )
 
     # Terceiro / nome do aluno
     if aluno:
-        whose_pronoun = "dela" if gen == "f" else ("dele" if gen == "m" else "")
-        if whose_pronoun:
+        whose = "dela" if gen == "f" else ("dele" if gen == "m" else "")
+        need = _format_need_phrases(missing, whose=whose or "")
+        if whose:
             return (
-                f"Perfeito! Pra eu gerar o contrato de {aluno}, me passa o {need} "
-                f"{whose_pronoun}. Você lê o contrato com calma antes de confirmar "
-                "qualquer pagamento."
+                f"Perfeito! Pra eu gerar o contrato de {aluno}, me passa {need}. "
+                "Você lê o contrato com calma antes de confirmar qualquer pagamento."
             )
         return (
-            f"Perfeito! Pra eu gerar o contrato de {aluno}, me passa o {need} "
+            f"Perfeito! Pra eu gerar o contrato de {aluno}, me passa {need} "
             "da pessoa que vai estudar. Você lê o contrato com calma antes de "
             "confirmar qualquer pagamento."
         )
@@ -226,21 +257,24 @@ def contract_data_request_reply(meta: dict[str, Any], ls: dict[str, Any]) -> str
         label = "da sua esposa" if rel == "esposa" else (
             "da sua filha" if rel == "filha" else "dela"
         )
+        need = _format_need_phrases(missing, whose="dela")
         return (
-            f"Perfeito! Pra eu gerar o contrato {label}, me passa o {need} dela. "
+            f"Perfeito! Pra eu gerar o contrato {label}, me passa {need}. "
             "Você lê o contrato com calma antes de confirmar qualquer pagamento."
         )
     if rel in ("marido", "filho") or gen == "m":
         label = "do seu marido" if rel == "marido" else (
             "do seu filho" if rel == "filho" else "dele"
         )
+        need = _format_need_phrases(missing, whose="dele")
         return (
-            f"Perfeito! Pra eu gerar o contrato {label}, me passa o {need} dele. "
+            f"Perfeito! Pra eu gerar o contrato {label}, me passa {need}. "
             "Você lê o contrato com calma antes de confirmar qualquer pagamento."
         )
+    need = _format_need_phrases(missing, whose="")
     return (
         f"Perfeito! Pra eu gerar o contrato da pessoa que vai estudar, me passa "
-        f"o {need}. Você lê o contrato com calma antes de confirmar qualquer pagamento."
+        f"{need}. Você lê o contrato com calma antes de confirmar qualquer pagamento."
     )
 
 

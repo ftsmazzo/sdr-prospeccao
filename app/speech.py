@@ -73,7 +73,8 @@ Estilo (obrigatório):
 - Contrações: "tá", "pra", "tô", "né".
 - Marcadores de conversa COM MODERAÇÃO: "então", "olha", "ó", "viu?", "né?", "tá?".
 - Reticências (...) para pausas naturais.
-- Frases CURTAS. Pode começar no meio do pensamento ("Ah, Maria, ...").
+- Frases CURTAS. Pode começar no meio do pensamento ("Ah, <nome>, ..." — use SOMENTE o nome do lead se estiver no texto; senão, nenhum nome).
+- NUNCA invente nem copie nomes de pessoa de exemplos/treinos. Use SOMENTE o nome do lead (ou do aluno, se a compra for para outra pessoa) informado no pedido; se não houver, nenhum nome.
 - Varie a abertura entre áudios (não repita o mesmo começo).
 - No máximo 3 frases curtas. Se houver pergunta, no máximo UMA no final.
 - Não invente informação. Corte links, listas, markdown, emojis.
@@ -188,6 +189,82 @@ def phonetize_for_tts(text: str) -> str:
     return re.sub(r"\s{2,}", " ", "".join(parts)).strip()
 
 
+# Nomes que o rewrite costuma copiar dos exemplos — nunca usar se não forem do lead.
+_EXAMPLE_PERSON_NAMES = frozenset(
+    {
+        "maria",
+        "joão",
+        "joao",
+        "josé",
+        "jose",
+        "ana",
+        "carlos",
+        "pedro",
+        "paulo",
+        "lucas",
+        "mariana",
+        "fernanda",
+        "roberto",
+    }
+)
+
+_VOCATIVE_RE = re.compile(
+    r"(?i)(?:^|(?<=[\s\[\]\.\!\?]))"
+    r"(?:(?:ah|oi|ol[aá]|eita|n[eé]|olha),?\s+)?"
+    r"(?P<name>Maria|Jo[aã]o|Jos[eé]|Ana|Carlos|Pedro|Paulo|Lucas|Mariana|Fernanda|Roberto)"
+    r",?\s*"
+)
+
+
+def allowed_spoken_names(*, lead_name: str = "", aluno_nome: str = "") -> set[str]:
+    out: set[str] = set()
+    for raw in (lead_name, aluno_nome):
+        for part in re.split(r"\s+", (raw or "").strip()):
+            p = part.strip(".,!?")
+            if len(p) >= 2:
+                out.add(p.casefold())
+    return out
+
+
+def strip_wrong_person_vocatives(
+    spoken: str, *, allowed_names: set[str] | None = None
+) -> str:
+    """Remove vocativos com nomes de exemplo / nomes não autorizados (ex.: Maria)."""
+    allowed = {n.casefold() for n in (allowed_names or set()) if n}
+
+    def _keep_or_drop(m: re.Match[str]) -> str:
+        name = m.group("name")
+        key = name.casefold()
+        if key in allowed:
+            return m.group(0)
+        if key in _EXAMPLE_PERSON_NAMES or key not in allowed:
+            # Mantém tag anterior se houver; só tira o vocativo
+            return ""
+        return m.group(0)
+
+    out = _VOCATIVE_RE.sub(_keep_or_drop, spoken or "")
+    out = re.sub(r"\s{2,}", " ", out).strip(" ,")
+    out = re.sub(r"^\[\s*", "[", out)
+    return out.strip()
+
+
+def spoken_has_foreign_person_name(
+    spoken: str, *, allowed_names: set[str] | None = None
+) -> bool:
+    allowed = {n.casefold() for n in (allowed_names or set()) if n}
+    for m in _VOCATIVE_RE.finditer(spoken or ""):
+        key = m.group("name").casefold()
+        if key not in allowed and key in _EXAMPLE_PERSON_NAMES:
+            return True
+    # "Ah, Maria" já coberto; também "..., Maria, ..."
+    for name in _EXAMPLE_PERSON_NAMES:
+        if name in allowed:
+            continue
+        if re.search(rf"(?i)\b{re.escape(name)}\b", spoken or ""):
+            return True
+    return False
+
+
 def _phonetize_chunk(t: str) -> str:
     from app.money_speech import expand_money_and_hours_for_speech
 
@@ -211,11 +288,24 @@ async def to_spoken_script(
     agent_gender: str = "f",
     allow_expression_tags: bool = True,
     last_audio_opening: str = "",
+    lead_name: str = "",
+    aluno_nome: str = "",
 ) -> str:
     """Gera versão falada; tags só aqui (nunca no reply/histórico)."""
     cleaned = phonetize_for_tts(scrub_for_tts(written))
     if len(cleaned) < 8:
         return sanitize_expression_tags(cleaned, allow_tags=allow_expression_tags)
+
+    allowed = allowed_spoken_names(lead_name=lead_name, aluno_nome=aluno_nome)
+    name_hint = ""
+    if allowed:
+        name_hint = (
+            "Nomes permitidos neste áudio: "
+            + ", ".join(sorted(allowed))
+            + ". Não use nenhum outro nome de pessoa.\n"
+        )
+    else:
+        name_hint = "Não use nenhum nome próprio de pessoa neste áudio.\n"
 
     system = build_spoken_rewrite_system(agent_name=agent_name, agent_gender=agent_gender)
     avoid = ""
@@ -229,33 +319,51 @@ async def to_spoken_script(
         if allow_expression_tags
         else "NÃO use nenhuma tag de expressão neste áudio."
     )
-    try:
-        spoken = await llm.chat(
+
+    async def _once(extra: str = "") -> str:
+        spoken_raw = await llm.chat(
             [
                 {"role": "system", "content": system},
                 {
                     "role": "user",
                     "content": (
                         "Reescreva para áudio casual de WhatsApp.\n"
-                        f"{tag_hint}{avoid}"
+                        f"{tag_hint}{avoid}{name_hint}{extra}"
                         "Atenção especial a CPF (= cê pê efe), TEA (= Têa), EAD (= ead):\n\n"
                         + cleaned[:900]
                     ),
                 },
             ],
-            # Sonnet 5: client omite temperature; outros modelos usam 0.55.
             temperature=0.55,
         )
-        spoken = phonetize_for_tts(scrub_for_tts(spoken))
-        spoken = sanitize_expression_tags(spoken, allow_tags=allow_expression_tags)
-        if len(spoken) > 420:
-            spoken = spoken[:420].rsplit(" ", 1)[0]
-            spoken = sanitize_expression_tags(spoken, allow_tags=allow_expression_tags)
+        spoken_out = phonetize_for_tts(scrub_for_tts(spoken_raw))
+        spoken_out = sanitize_expression_tags(spoken_out, allow_tags=allow_expression_tags)
+        spoken_out = strip_wrong_person_vocatives(spoken_out, allowed_names=allowed)
+        if len(spoken_out) > 420:
+            spoken_out = spoken_out[:420].rsplit(" ", 1)[0]
+            spoken_out = sanitize_expression_tags(
+                spoken_out, allow_tags=allow_expression_tags
+            )
+        return spoken_out
+
+    try:
+        spoken = await _once()
+        if spoken_has_foreign_person_name(spoken, allowed_names=allowed):
+            spoken = await _once(
+                extra=(
+                    "IMPORTANTE: remova qualquer nome inventado (ex.: Maria). "
+                    "Use só o nome permitido ou nenhum nome.\n"
+                )
+            )
+            spoken = strip_wrong_person_vocatives(spoken, allowed_names=allowed)
         return spoken or sanitize_expression_tags(cleaned, allow_tags=False)
     except (httpx.HTTPError, RuntimeError, KeyError, IndexError):
         parts = re.split(r"(?<=[.!?])\s+", cleaned)
         short = " ".join(parts[:3]).strip()
         return sanitize_expression_tags(
-            phonetize_for_tts(short[:420] or cleaned),
+            strip_wrong_person_vocatives(
+                phonetize_for_tts(short[:420] or cleaned),
+                allowed_names=allowed,
+            ),
             allow_tags=False,
         )

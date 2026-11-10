@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.9.3", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.9.4", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.9.3",
+        "version": "0.9.4",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
