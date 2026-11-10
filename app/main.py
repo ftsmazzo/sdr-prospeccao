@@ -548,10 +548,15 @@ def checkout_page(token: str):
     a_vista_label = session.a_vista_label or (band.a_vista_label if band else None)
     total_18_label = session.total_18_label or (band.total_18_label if band else None)
     monthly_label = session.amount_label or (band.monthly_label if band else None)
-    if band or a_vista_label:
+    if band or a_vista_label or session.desconto_pct:
         avista_txt = a_vista_label or "—"
-        if session.desconto_pct:
-            avista_txt = f"{avista_txt} ({session.desconto_pct}% acordo)"
+        if session.desconto_pct and (
+            not a_vista_label or f"{session.desconto_pct}%" not in str(a_vista_label)
+        ):
+            if a_vista_label and a_vista_label != "—":
+                avista_txt = f"{a_vista_label} ({session.desconto_pct}% acordo)"
+            else:
+                avista_txt = f"{session.desconto_pct}% (acordo) — valor a confirmar"
         valores_html = (
             f"<li>Mensalidade: <strong>{monthly_label or '—'}</strong></li>"
             f"<li>Total em 18x: <strong>{total_18_label or '—'}</strong></li>"

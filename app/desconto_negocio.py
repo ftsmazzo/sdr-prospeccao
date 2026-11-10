@@ -101,16 +101,26 @@ def pricing_snapshot_for_course(
     band = price_for_course(course)
     pct = desconto_pct if desconto_pct is not None else acordo_pct_from_meta(meta)
     if band is None:
+        stored = max(0, min(90, int(pct))) if pct is not None else None
+        if stored is not None:
+            valores = (
+                f"Mensalidade (demo): a partir de R$ 69,90 · "
+                f"À vista com {stored}% (acordo) — valor exato a confirmar com o curso no catálogo"
+            )
+            a_vista_label = f"acordo {stored}% (curso a confirmar)"
+        else:
+            valores = "Mensalidade (demo): a partir de R$ 69,90"
+            a_vista_label = None
         return {
             "band": None,
-            "desconto_pct": pct,
+            "desconto_pct": stored,
             "monthly": None,
             "monthly_label": "a partir de R$ 69,90",
             "total_18": None,
             "total_18_label": None,
             "a_vista": None,
-            "a_vista_label": None,
-            "valores_line": "Mensalidade (demo): a partir de R$ 69,90",
+            "a_vista_label": a_vista_label,
+            "valores_line": valores,
         }
     tabela_pct = int(getattr(get_settings(), "desconto_tabela_avista_pct", 10) or 10)
     if pct is None:

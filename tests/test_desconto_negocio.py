@@ -137,3 +137,13 @@ def test_checkout_e_pdf_respeitam_acordo_30():
     assert "1.006,74" in snap["valores_line"]
     pdf = build_contrato_pdf(lead_name="Miriely", course=course, desconto_pct=30)
     assert pdf.startswith(b"%PDF")
+
+
+def test_snapshot_sem_faixa_ainda_mostra_pct():
+    snap = pricing_snapshot_for_course(
+        "Pós-Graduação EAD Faveni", desconto_pct=20
+    )
+    assert snap["band"] is None
+    assert snap["desconto_pct"] == 20
+    assert "20%" in snap["valores_line"]
+    assert snap["a_vista_label"] is not None

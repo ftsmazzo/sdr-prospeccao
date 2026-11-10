@@ -218,16 +218,18 @@ class FollowUpScheduler:
         from app.pricing import lookup_course_hours
 
         hours = lookup_course_hours(course)
-        desconto_pct = job.get("desconto_pct")
-        if desconto_pct is None:
-            try:
-                from app.desconto_negocio import acordo_pct_from_meta
-                from app.memory import ConversationMemory
+        # Na hora do envio, meta atual vence o % congelado no job (ex.: 20→30 no delay).
+        desconto_pct = None
+        try:
+            from app.desconto_negocio import acordo_pct_from_meta
+            from app.memory import ConversationMemory
 
-                meta_now = ConversationMemory(self.settings).get_meta(phone)
-                desconto_pct = acordo_pct_from_meta(meta_now)
-            except Exception:  # noqa: BLE001
-                desconto_pct = None
+            meta_now = ConversationMemory(self.settings).get_meta(phone)
+            desconto_pct = acordo_pct_from_meta(meta_now)
+        except Exception:  # noqa: BLE001
+            desconto_pct = None
+        if desconto_pct is None and job.get("desconto_pct") is not None:
+            desconto_pct = job.get("desconto_pct")
         try:
             desconto_pct = int(desconto_pct) if desconto_pct is not None else None
         except (TypeError, ValueError):
