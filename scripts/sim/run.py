@@ -84,7 +84,7 @@ async def _amain(args: argparse.Namespace) -> int:
         order = {pid: i for i, pid in enumerate(wanted)}
         personas.sort(key=lambda p: order.get(str(p.get("id")), 999))
 
-    agent_model = settings.openrouter_model
+    agent_model = os.environ.get("SIM_AGENT_MODEL", settings.openrouter_model)
     lead_model = os.environ.get("SIM_LEAD_MODEL", "openai/gpt-4.1-mini")
     judge_model = os.environ.get("SIM_JUDGE_MODEL", "openai/gpt-4.1")
     models = {
@@ -120,8 +120,11 @@ async def _amain(args: argparse.Namespace) -> int:
     md_path, json_path = write_reports(results, models=models, out_dir=out_dir)
     print(f"\nRelatório: {md_path}")
     print(f"JSON:      {json_path}")
-    # imprime MD no stdout para o agente colar
-    print("\n" + md_path.read_text(encoding="utf-8"))
+    # Evita UnicodeEncodeError no console Windows (cp1252).
+    try:
+        print("\n" + md_path.read_text(encoding="utf-8"))
+    except UnicodeEncodeError:
+        print("\n(relatório salvo; stdout omitido por encoding do console)")
     return 0
 
 

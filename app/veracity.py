@@ -87,7 +87,7 @@ _OFFERS_ENROLLMENT_RE = re.compile(
     r")"
 )
 
-# Lead pede matrícula / passo a passo.
+# Lead pede matrícula / passo a passo / contrato.
 _LEAD_ENROLLMENT_RE = re.compile(
     r"(?i)\b("
     r"(?:manda|me\s+manda|envie|passa|quero)\s+(?:o\s+)?passo\s+a\s+passo"
@@ -101,7 +101,15 @@ _LEAD_ENROLLMENT_RE = re.compile(
     r"|pode\s+seguir\s+com\s+a\s+matr[ií]cula"
     r"|já\s+decidi.*matr[ií]cula"
     r"|matr[ií]cula\s+agora"
+    r"|encaminha(?:r)?\s+(?:o\s+)?contrato"
+    r"|(?:manda|envie|envia|quero)\s+(?:o\s+)?contrato"
+    r"|pode\s+encaminhar\s+contrato"
     r")"
+)
+
+# CPF no texto do lead (11 dígitos com ou sem máscara).
+_LEAD_CPF_IN_TEXT_RE = re.compile(
+    r"(?i)(?:\bcpf\b\s*[:.]?\s*)?(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b"
 )
 
 _LEAD_SENDING_DOC_RE = re.compile(
@@ -220,12 +228,31 @@ def reply_has_markdown_list(text: str) -> bool:
     )
 
 
+def lead_sends_cpf(text: str) -> bool:
+    m = _LEAD_CPF_IN_TEXT_RE.search(text or "")
+    if not m:
+        return False
+    digits = re.sub(r"\D", "", m.group(1))
+    return len(digits) == 11
+
+
 def apply_enrollment_intent(ls: dict[str, Any], user_text: str) -> None:
-    """Se o lead pede matrícula com curso definido, marca aceite_matricula."""
-    if not lead_requests_enrollment(user_text):
+    """Aceite se pede matrícula/contrato ou manda CPF, com curso + graduação ok."""
+    if not ls.get("curso_escolhido"):
         return
-    if ls.get("curso_escolhido"):
+    grad = ls.get("graduacao")
+    if grad in ("cursando", "nao_tem"):
+        return
+    wants = lead_requests_enrollment(user_text) or lead_sends_cpf(user_text)
+    if wants and grad == "concluida":
         ls["aceite_matricula"] = True
+    elif wants and grad is None and lead_sends_cpf(user_text):
+        # CPF + curso: trata como aceite; graduação ainda pode ser pedida no fluxo.
+        ls["aceite_matricula"] = True
+    elif lead_requests_enrollment(user_text):
+        # Pedido explícito de matrícula com curso (graduação pode já estar ok ou null).
+        if grad != "cursando" and grad != "nao_tem":
+            ls["aceite_matricula"] = True
 
 
 def mark_refused_fields(meta: dict[str, Any], *, lead_text: str, last_agent: str) -> None:

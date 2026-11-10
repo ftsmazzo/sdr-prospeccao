@@ -91,6 +91,25 @@ def test_curso_uti_fora_catalogo():
     assert any(x["regra"] == "curso_fora_catalogo" for x in v)
 
 
+def test_todos_cursos_catalogo_ok():
+    cat = load_catalog()
+    assert len(cat) >= 26
+    for name, hours in cat:
+        reply = f"A pós em {name} tem {hours}h. Quer seguir?"
+        v = judge_agent_reply(reply, turno=2, aceite_matricula=False, action_executed=False)
+        assert not any(x["regra"] == "curso_fora_catalogo" for x in v), name
+
+
+def test_tea_e_psicopedagogia_no_catalogo():
+    for reply in (
+        "A pós em Psicopedagogia Institucional e Clínica tem 620h.",
+        "Temos TEA – Transtorno do Espectro Autista (740h).",
+        "A especialização em TEA - Transtorno do Espectro Autista é 740h.",
+    ):
+        v = judge_agent_reply(reply, turno=2, aceite_matricula=False, action_executed=False)
+        assert not any(x["regra"] == "curso_fora_catalogo" for x in v), reply
+
+
 def test_curso_uti_negado_pelo_lead_nao_viola():
     lead = "Quero pós em UTI, vocês têm?"
     reply = (

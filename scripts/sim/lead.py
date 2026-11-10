@@ -33,6 +33,25 @@ Regras:
 """
 
 
+def _extract_messages_json(raw: str) -> list[str] | None:
+    """Extrai messages de JSON acidental (modo picado ou vazamento)."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        m = re.search(r"\{[\s\S]*\}", text)
+        data = json.loads(m.group(0) if m else text)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    msgs = data.get("messages")
+    if not isinstance(msgs, list):
+        return None
+    out = [str(x).strip() for x in msgs if str(x).strip()]
+    return out or None
+
+
 async def generate_lead_message(
     settings: Settings,
     *,
@@ -48,7 +67,10 @@ async def generate_lead_message(
             "com 2 ou 3 mensagens CURTAS (estilo WhatsApp picado). Só o JSON."
         )
     else:
-        system += "\nResponda só com o texto da sua próxima mensagem no WhatsApp (sem aspas, sem JSON)."
+        system += (
+            "\nResponda só com o texto da sua próxima mensagem no WhatsApp "
+            "(sem aspas, sem JSON, sem objeto messages)."
+        )
 
     messages: list[dict] = [{"role": "system", "content": system}]
     transcript = []
@@ -65,18 +87,19 @@ async def generate_lead_message(
     )
 
     raw = await chat(settings, messages, model=model, temperature=LEAD_TEMPERATURE)
+    extracted = _extract_messages_json(raw)
     if picado:
-        try:
-            # extract JSON
-            m = re.search(r"\{[\s\S]*\}", raw)
-            data = json.loads(m.group(0) if m else raw)
-            msgs = [str(x).strip() for x in data.get("messages", []) if str(x).strip()]
-            if len(msgs) >= 2:
-                return msgs[:3]
-        except (json.JSONDecodeError, AttributeError, TypeError):
-            pass
+        if extracted and len(extracted) >= 2:
+            return extracted[:3]
+        if extracted and len(extracted) == 1:
+            return extracted[0]
         parts = [p.strip() for p in re.split(r"\n+", raw) if p.strip()]
         if len(parts) >= 2:
             return parts[:3]
         return [raw.strip()]
+    # Modo texto: se o modelo vazou JSON {"messages": [...]}, junta em texto.
+    if extracted:
+        if len(extracted) == 1:
+            return extracted[0]
+        return extracted
     return raw.strip()

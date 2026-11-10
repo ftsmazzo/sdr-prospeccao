@@ -48,9 +48,8 @@ from app.course_facts import (
     reply_has_wrong_course_facts,
 )
 from app.handoff_requests import (
-    agent_offered_specialist,
+    can_execute_register_handoff,
     handoff_registered_reply,
-    lead_accepts_specialist,
     register_handoff_request,
 )
 from app.veracity import (
@@ -442,25 +441,25 @@ class Orchestrator:
             bool(avoid),
             streak,
         )
-        # Dois stocks seguidos → handoff (anti-loop) + registro real.
+        # Dois stocks seguidos → handoff (anti-loop), sem auto-registro Redis.
         if streak >= 2 and meta.get("etapa") != "handoff_humano":
             enter_handoff(meta, "loop_stock")
-            phone = str(meta.get("_phone") or "unknown")
-            self._register_handoff_now(
-                phone=phone,
-                meta=meta,
-                motivo="loop_stock",
-                push_name=str(meta.get("_push_name") or ""),
-            )
             logger.info("handoff por loop_stock phone_meta_etapa=%s", meta.get("etapa"))
             return (
-                "Registrei seu pedido; um especialista do polo vai falar com você "
-                "por aqui, tá bem?"
+                "Quando quiser, um especialista do polo pode te ajudar por aqui. "
+                "Quer que eu registre seu pedido?"
             )
         return stock
 
     def _apply_actions(
-        self, phone: str, meta: dict, agent: AgentResponse, push_name: str
+        self,
+        phone: str,
+        meta: dict,
+        agent: AgentResponse,
+        push_name: str,
+        *,
+        user_text: str = "",
+        last_assistant: str = "",
     ) -> tuple[str, str | None, str | None, bool]:
         """Executa action. Retorna (reply, course, blocked_promise_reason, delivery_ran)."""
         reply = agent.reply.strip()
@@ -483,7 +482,47 @@ class Orchestrator:
         ls = meta["lead_state"]
         delivery_ran = False
 
-        if action == "LEAD_DATA":
+        if action == "REGISTER_HANDOFF":
+            gate_ok, gate_reason = can_execute_register_handoff(
+                last_assistant=last_assistant,
+                user_text=user_text,
+                already_registered=bool(meta.get("handoff_registrado")),
+            )
+            if not gate_ok:
+                logger.info(
+                    "REGISTER_HANDOFF ignorada phone=%s reason=%s",
+                    phone,
+                    gate_reason,
+                )
+                action = None
+            else:
+                motivo = str(
+                    data.get("motivo")
+                    or meta.get("handoff_reason")
+                    or ls.get("area_interesse")
+                    or "especialista"
+                )
+                self._register_handoff_now(
+                    phone=phone,
+                    meta=meta,
+                    motivo=motivo,
+                    push_name=push_name,
+                )
+                if meta.get("etapa") != "handoff_humano":
+                    if ls.get("e_aluno_atual") or meta.get("etapa") == "aluno_atual":
+                        meta["etapa"] = "aluno_atual"
+                        meta["handoff_reason"] = meta.get("handoff_reason") or "suporte_aluno"
+                    else:
+                        enter_handoff(meta, motivo if motivo != "especialista" else "especialista")
+                meta["handoff_avisado"] = True
+                if not re.search(r"(?i)\bregistrei\b", reply or ""):
+                    reply = handoff_registered_reply(
+                        nome=ls.get("nome") or push_name or None,
+                        motivo=motivo,
+                    )
+                logger.info("REGISTER_HANDOFF ok phone=%s motivo=%s", phone, motivo)
+
+        elif action == "LEAD_DATA":
             full_name = str(data.get("full_name") or "").strip()
             cpf = normalize_cpf(str(data.get("cpf") or ""))
             birth = str(data.get("birth_date") or "").strip()
@@ -629,46 +668,74 @@ class Orchestrator:
             self.last_reply_diag["regen"] = True
             self.last_reply_diag["regen_reason"] = reason
             logger.info("regen reply reason=%s", reason)
-            regenerated = await self._regenerate_reply(messages, meta, reason)
-            if regenerated:
+            candidate = await self._regenerate_reply(messages, meta, reason)
+            check_delivery = (
+                delivery_ran
+                if reason not in ("promessa_sem_acao", "promessa_lembrete")
+                else False
+            )
+
+            def _still(text: str) -> str | None:
+                if not text:
+                    return reason
                 still_blocked = None
-                if reply_looks_like_callback_promise(regenerated):
+                if reply_looks_like_callback_promise(text):
                     still_blocked = "promessa_lembrete"
-                elif reply_looks_like_delivery_promise(regenerated):
+                elif reply_looks_like_delivery_promise(text):
                     still_blocked = "promessa_sem_acao"
-                still = self._reply_needs_regen(
-                    regenerated,
+                return self._reply_needs_regen(
+                    text,
                     meta,
-                    delivery_ran=delivery_ran
-                    if reason not in ("promessa_sem_acao", "promessa_lembrete")
-                    else False,
+                    delivery_ran=check_delivery,
                     blocked_promise_reason=still_blocked,
                     last_assistant=last_assistant,
                     has_media=has_media,
                     just_entered_handoff=just_entered_handoff,
                     user_text=user_text,
                 )
-                if not still:
-                    meta["stock_streak"] = 0
-                    self._maybe_mark_handoff_avisado(
-                        meta, just_entered_handoff=just_entered_handoff
-                    )
-                    return regenerated
-                logger.info("regen ainda viola (%s) — stock", still)
-                stock = self._apply_stock_fallback(meta, still or reason, regenerated)
-                self.last_reply_diag["stock"] = True
-                self.last_reply_diag["stock_reason"] = still or reason
-                self.last_reply_diag["stock_text"] = stock
-                if meta.get("handoff_reason") == "loop_stock":
-                    self.last_reply_diag["stock_reason"] = "loop_stock"
+
+            still = _still(candidate) if candidate else reason
+            if candidate and not still:
+                meta["stock_streak"] = 0
                 self._maybe_mark_handoff_avisado(
                     meta, just_entered_handoff=just_entered_handoff
                 )
-                return stock
-            stock = self._apply_stock_fallback(meta, reason, reply)
+                return candidate
+
+            # 2ª regeneração: responder direto à última mensagem do lead.
+            logger.info("regen 2ª tentativa reason=%s still=%s", reason, still)
+            second_msgs = list(messages) + [
+                {
+                    "role": "system",
+                    "content": (
+                        "Sua resposta anterior ainda violou uma regra. "
+                        "Responda DIRETAMENTE à última mensagem do lead, "
+                        "sem meta-fala (catálogo/tabela/regras), sem inventar "
+                        "ação, preço ou política. "
+                        "Responda de novo APENAS com o JSON do schema "
+                        "(reply + state_update + action). Na maioria dos casos action=null."
+                    ),
+                }
+            ]
+            second_agent = await self._call_agent_json(second_msgs)
+            second = (second_agent.reply or "").strip()
+            if looks_like_json(second):
+                second = ""
+            still2 = _still(second) if second else (still or reason)
+            if second and not still2:
+                meta["stock_streak"] = 0
+                self._maybe_mark_handoff_avisado(
+                    meta, just_entered_handoff=just_entered_handoff
+                )
+                return second
+
+            stock_from = second or candidate or reply
+            stock_reason = still2 or still or reason
+            logger.info("regen falhou 2x — stock reason=%s", stock_reason)
+            stock = self._apply_stock_fallback(meta, stock_reason, stock_from)
             self.last_reply_diag["stock"] = True
             self.last_reply_diag["stock_reason"] = (
-                "loop_stock" if meta.get("handoff_reason") == "loop_stock" else reason
+                "loop_stock" if meta.get("handoff_reason") == "loop_stock" else stock_reason
             )
             self.last_reply_diag["stock_text"] = stock
             self._maybe_mark_handoff_avisado(
@@ -819,52 +886,19 @@ class Orchestrator:
         if meta.get("etapa") == "handoff_humano":
             logger.info("handoff_humano phone=%s summary=%s", phone, summarize_lead(meta))
 
-        # Registro real: handoff automático OU lead aceitou encaminhamento oferecido.
-        offered = agent_offered_specialist(last_assistant) or agent_offered_specialist(
-            agent.reply or ""
-        )
-        accepted = lead_accepts_specialist(user_text)
-        is_aluno = bool(ls.get("e_aluno_atual")) or meta.get("etapa") == "aluno_atual"
-        should_register = just_entered_handoff or (
-            accepted
-            and (
-                offered
-                or meta.get("etapa") in ("handoff_humano", "aluno_atual")
-                or is_aluno
-            )
-        )
-        force_registrei = False
-        if should_register:
-            if is_aluno:
-                motivo = "suporte_aluno"
-            else:
-                motivo = str(
-                    meta.get("handoff_reason")
-                    or ls.get("area_interesse")
-                    or agent.state_update.get("proximo_passo")
-                    or "especialista"
-                )
-            if just_entered_handoff or accepted:
-                self._register_handoff_now(
-                    phone=phone,
-                    meta=meta,
-                    motivo=motivo,
-                    push_name=push_name,
-                )
-                force_registrei = bool(accepted)
-                if meta.get("etapa") == "aluno_atual" or is_aluno:
-                    meta["handoff_avisado"] = True
-                    meta["etapa"] = "aluno_atual"
-                elif meta.get("etapa") != "handoff_humano":
-                    enter_handoff(
-                        meta,
-                        motivo if motivo not in ("especialista",) else "especialista",
-                    )
-                    just_entered_handoff = True
-
+        # Registro Redis só via action REGISTER_HANDOFF (gates em _apply_actions).
         reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
-            phone, meta, agent, push_name
+            phone,
+            meta,
+            agent,
+            push_name,
+            user_text=user_text,
+            last_assistant=last_assistant,
         )
+        if meta.get("_handoff_registered_this_turn"):
+            just_entered_handoff = (
+                just_entered_handoff or meta.get("etapa") == "handoff_humano"
+            )
         reply = await self._finalize_reply(
             phone=phone,
             meta=meta,
@@ -877,24 +911,6 @@ class Orchestrator:
             just_entered_handoff=just_entered_handoff,
             user_text=user_text,
         )
-        # Aceite de especialista no mesmo turno: resposta deve conter o registro.
-        if force_registrei and meta.get("_handoff_registered_this_turn"):
-            if not re.search(r"(?i)\bregistrei\b", reply or ""):
-                reply = handoff_registered_reply(
-                    nome=ls.get("nome") or push_name or None,
-                    motivo=str(
-                        meta.get("handoff_reason")
-                        or ("suporte_aluno" if is_aluno else "especialista")
-                    ),
-                )
-                self.last_reply_diag["stock"] = True
-                self.last_reply_diag["stock_reason"] = "handoff_registered"
-                self.last_reply_diag["stock_text"] = reply
-            meta["handoff_avisado"] = True
-            if not meta.get("handoff_reason"):
-                meta["handoff_reason"] = (
-                    "suporte_aluno" if is_aluno else "especialista"
-                )
         self.memory.set_meta(phone, meta)
 
         self.memory.append(phone, "user", user_text)

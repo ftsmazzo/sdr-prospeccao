@@ -628,6 +628,12 @@ def can_run_action(meta: dict[str, Any], action: str | None) -> tuple[bool, str]
             return False, "CHECKOUT_READY sem_aceite"
         return True, "ok"
 
+    if action == "REGISTER_HANDOFF":
+        # Gates finos (oferta prévia / aceite / recusa) ficam no orquestrador.
+        if meta.get("handoff_registrado"):
+            return False, "REGISTER_HANDOFF ja_registrado"
+        return True, "ok"
+
     return False, f"action desconhecida {action}"
 
 
@@ -656,7 +662,7 @@ def reply_looks_like_promise(reply: str) -> bool:
 
 
 def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
-    """Frases prontas alternativas (fallback após regeneração falhar)."""
+    """Frases prontas residuais (só após 2ª regeneração falhar)."""
     if "pending_contract" in reason:
         return [
             (
@@ -688,7 +694,6 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
         ]
 
     curso = ls.get("curso_escolhido") or "esse curso"
-    # Action bloqueada por falta de curso/aceite (tokens no reason) — antes do genérico.
     if "sem_curso" in reason:
         return [
             "Antes de eu preparar o contrato, me confirma qual curso você quer seguir?",
@@ -705,27 +710,9 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
                 f"Você quer seguir com a matrícula em {curso}, ou ainda prefere "
                 "só tirar dúvidas?"
             ),
-            (
-                f"Sobre {curso}: é 100% online, a partir de R$ 69,90, com troca de curso "
-                "sem custo em 90 dias. Quer que eu detalhe o passo a passo da matrícula "
-                "sem compromisso, ou prefere seguir com a matrícula?"
-            ),
         ]
 
-    # Motivos de regeneração / action fora da etapa: responder inline, sem empurrar aceite.
-    if reason == "acao_fingida":
-        return [
-            (
-                "Na nossa lista atual não tem esse item. "
-                "Quer que eu registre seu pedido para um especialista do polo "
-                "falar com você por aqui?"
-            ),
-            (
-                "Posso registrar seu pedido para um especialista te chamar por aqui. "
-                "Quer que eu faça isso?"
-            ),
-        ]
-    if reason == "fato_curso_errado":
+    if reason in ("fato_curso_errado", "preco_fora_tabela"):
         try:
             from app.course_facts import stock_reply_from_facts
 
@@ -734,36 +721,21 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
                 return [built]
         except Exception:  # noqa: BLE001
             pass
-        curso = ls.get("curso_escolhido") or ls.get("curso_recomendado") or "essa pós"
-        return [
-            (
-                f"Sobre {curso}: te passo carga, prazo e valores certinhos. "
-                "Quer que eu detalhe mensalidade e à vista?"
-            ),
-        ]
-    if reason == "lista_markdown":
-        return [
-            (
-                "Resumo em texto corrido: a pós é 100% online, com mensalidade "
-                "conforme a faixa do curso e documentos na hora de fechar. "
-                "O que você quer esclarecer primeiro?"
-            ),
-        ]
-    if reason == "preco_fora_tabela":
-        try:
-            from app.course_facts import stock_reply_from_facts
-
-            built = stock_reply_from_facts(ls)
-            if built:
-                return [built]
-        except Exception:  # noqa: BLE001
-            pass
+        if reason == "fato_curso_errado":
+            curso_f = ls.get("curso_escolhido") or ls.get("curso_recomendado") or "essa pós"
+            return [
+                (
+                    f"Sobre {curso_f}: te passo carga, prazo e valores certinhos. "
+                    "Quer que eu detalhe mensalidade e à vista?"
+                ),
+            ]
         return [
             (
                 "A mensalidade é a da faixa do seu curso; à vista é o valor total "
                 "com 10%. Quer que eu te diga os três números (mensal, 18x e à vista)?"
             ),
         ]
+
     if reason == "matricula_sem_graduacao":
         return [
             (
@@ -774,45 +746,10 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
                 "Pra eu te orientar certo na matrícula: você já concluiu a graduação?"
             ),
         ]
-    if reason in (
-        "promessa_sem_acao",
-        "dados_antes_fechamento",
-        "escassez",
-        "quase_igual",
-        "acao_fingida",
-        "preco_fora_tabela",
-        "matricula_sem_graduacao",
-        "fato_curso_errado",
-        "lista_markdown",
-    ) or "bloqueada etapa" in reason:
-        curso_lbl = ls.get("curso_escolhido") or "o curso"
-        return [
-            (
-                f"Sobre {curso_lbl}: é 100% online, a partir de R$ 69,90, com troca "
-                "sem custo em 90 dias. O passo a passo é confirmar o curso, "
-                "na hora de fechar você envia os dados pessoais e depois recebe "
-                "o informativo. O que você quer esclarecer agora?"
-            ),
-            (
-                "Posso te passar o resumo agora: mensalidade a partir de R$ 69,90, "
-                "100% online e documentos só depois da confirmação. "
-                "O que você ainda quer saber?"
-            ),
-            (
-                "Sem prometer envio por agora: me diz se quer valor, prazo, "
-                "documentos ou como funciona o EAD que eu respondo aqui."
-            ),
-            "Quando quiser retomar, é só me chamar aqui.",
-        ]
+
+    # Residual genérico: só despedida segura (2ª regen deveria ter respondido).
     return [
-        (
-            "Me conta o que ainda falta pra você se sentir seguro — curso, valor "
-            "ou como funciona o estudo — que eu te respondo direto."
-        ),
-        (
-            "Posso resumir valor, prazo e documentos aqui mesmo. "
-            "O que você quer esclarecer primeiro?"
-        ),
+        "Quando quiser retomar, é só me chamar aqui.",
     ]
 
 

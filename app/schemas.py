@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger("edu.schemas")
 
-ActionType = Literal["LEAD_DATA", "FOLLOWUP_DOC", "CHECKOUT_READY"]
+ActionType = Literal["LEAD_DATA", "FOLLOWUP_DOC", "CHECKOUT_READY", "REGISTER_HANDOFF"]
 
 NEUTRAL_REPLY = "Só um instante, me confirma de novo o que você precisa?"
 

@@ -91,6 +91,9 @@ async def run_persona(
     evo = MockEvolution()
     sched = MockScheduler()
     patch_scheduler(sched)
+    # SIM_AGENT_MODEL — override do modelo da agente nesta simulação
+    if agent_model:
+        settings.openrouter_model = agent_model
     orch = build_orchestrator(settings, evo)
     catalog = load_catalog()
 

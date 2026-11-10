@@ -147,6 +147,23 @@ def lead_accepts_specialist(text: str) -> bool:
     )
 
 
+def lead_refuses_handoff(text: str) -> bool:
+    """Recusa explícita de especialista/registro/encaminhamento."""
+    return bool(
+        re.search(
+            r"(?i)\b("
+            r"n[aã]o\s+quero\s+(?:especialista|registro|que\s+anotem|encaminh|"
+            r"que\s+me\s+encaminh|intermedi[aá]rio)"
+            r"|sem\s+intermedi[aá]rio"
+            r"|n[aã]o\s+(?:quero\s+)?(?:anotar|encaminhar|registrar)"
+            r"|n[aã]o\s+precisa\s+(?:registrar|encaminhar|anotar|especialista)"
+            r"|deixa\s+pra\s+l[aá]"
+            r")\b",
+            text or "",
+        )
+    )
+
+
 def agent_offered_specialist(text: str) -> bool:
     low = (text or "").casefold()
     return any(
@@ -158,8 +175,29 @@ def agent_offered_specialist(text: str) -> bool:
             "anoto seu caso",
             "passar seu interesse",
             "passar o contato",
+            "registre seu pedido",
+            "registrar seu pedido",
+            "registrar o seu pedido",
         )
     )
+
+
+def can_execute_register_handoff(
+    *,
+    last_assistant: str,
+    user_text: str,
+    already_registered: bool,
+) -> tuple[bool, str]:
+    """Gates da action REGISTER_HANDOFF."""
+    if already_registered:
+        return False, "ja_registrado"
+    if not agent_offered_specialist(last_assistant):
+        return False, "sem_oferta_previa"
+    if lead_refuses_handoff(user_text):
+        return False, "lead_recusou"
+    if not lead_accepts_specialist(user_text):
+        return False, "lead_nao_aceitou"
+    return True, "ok"
 
 
 def handoff_registered_reply(

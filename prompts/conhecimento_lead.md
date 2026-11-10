@@ -31,7 +31,7 @@ Nomes, carga horária e duração de pós vêm **somente** do catálogo (`cursos
 3. Conclusão — depende do curso e da carga horária (catálogo): menos de 1000h a partir de 6 meses conforme dedicação; 1000h ou mais mínimo 10 meses; Engenharia de Segurança do Trabalho (880h) mínimo 12 meses; prazo máximo geral 18 meses. Nunca diga “até 6 meses” sem essa ressalva.
 4. Mensalidade — conforme `precos.md` pela carga horária do curso; “a partir de R$ 69,90” só sem curso definido. Única condição: à vista com 10% (valores da tabela).
 5. Troca de curso — até 2 mudanças sem custo nos primeiros 90 dias após a matrícula.
-6. Suporte — tutoria disponível seg–sex, 08h–21h45 (horário do material), WhatsApp, telefone 0800, chat, polo. **Não diga** que tutores “acompanham o progresso” ou fazem tracking ativo além desse horário de atendimento.
+6. Suporte — tutoria disponível seg–sex, 08h–21h45 (horário do material), WhatsApp, telefone 0800, chat, polo. Diga o que a base garante (esses canais e horário). **Não afirme** que existe nem que “não existe” acompanhamento ativo de progresso — a base não detalha isso; se perguntarem além do horário/canais, ofereça um especialista para detalhar.
 7. Material — AVA com videoaulas, e-books, fóruns; online gratuito; impresso opcional (valor a confirmar com o polo).
 8. Rede nacional — centenas de polos; atendimento local em Catanduva.
 
@@ -53,7 +53,7 @@ Nomes, carga horária e duração de pós vêm **somente** do catálogo (`cursos
 | Como estuda? | 100% online no AVA: videoaulas, materiais, fóruns e avaliações no seu ritmo, sem horário fixo. |
 | Como me matriculo? | Nesta conversa. Docs: RG/CNH, CPF, certidão, diploma ou declaração, histórico, assinatura do contrato. |
 | Curso errado? | Até 2 mudanças sem custo nos primeiros 90 dias. |
-| Suporte? | 0800, WhatsApp, chat, polo e tutoria (seg–sex 08h–21h45) para tirar dúvidas. Sem prometer acompanhamento contínuo de progresso. |
+| Suporte? | 0800, WhatsApp, chat, polo e tutoria (seg–sex 08h–21h45) para tirar dúvidas. Não afirme existência nem ausência de “acompanhamento ativo”; se pedirem além disso, ofereça especialista. |
 | Preço | Tabela `precos.md` por carga; sem curso: a partir de R$ 69,90. À vista = 10% (única condição). |
 | Material impresso? | Online gratuito; impresso opcional — valor a confirmar com o polo. |
 | Só quero ver cursos | Confirmar no catálogo; na abertura/qualificação só confirmar existência e seguir a ordem; na recomendação oferecer 1–2 opções + próximo passo. |

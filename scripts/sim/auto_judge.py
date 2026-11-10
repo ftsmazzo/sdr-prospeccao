@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -114,7 +115,36 @@ def load_catalog(path: Path | None = None) -> list[tuple[str, int]]:
 
 
 def _normalize(s: str) -> str:
-    return re.sub(r"\s+", " ", s.casefold()).strip()
+    """Casefold + remove acentos + unifica travessões/hífens."""
+    t = unicodedata.normalize("NFD", s or "")
+    t = "".join(ch for ch in t if unicodedata.category(ch) != "Mn")
+    t = t.casefold()
+    t = re.sub(r"[–—−‐-]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _catalog_name_matches(raw: str, catalog_names: list[str]) -> bool:
+    """True se raw corresponde a algum nome do catálogo (acentos/travessão/parcial)."""
+    nr = _normalize(raw)
+    if not nr or len(nr) < 3:
+        return False
+    for name in catalog_names:
+        kn = _normalize(name)
+        if not kn:
+            continue
+        if nr == kn or nr in kn or kn in nr:
+            return True
+        # tokens significativos (≥4 chars), exige ≥2 em comum na ordem razoável
+        raw_toks = [t for t in nr.split() if len(t) >= 4]
+        cat_toks = [t for t in kn.split() if len(t) >= 4]
+        if len(raw_toks) >= 2 and len(cat_toks) >= 2:
+            if all(any(rt == ct or rt in ct or ct in rt for ct in cat_toks) for rt in raw_toks[:3]):
+                return True
+        # TEA / siglas curtas no início do nome do catálogo
+        if len(nr) <= 5 and kn.startswith(nr + " "):
+            return True
+    return False
 
 
 # Áreas / rótulos genéricos — não são nome de curso do catálogo.
@@ -202,39 +232,31 @@ def _find_unknown_courses(
     lead_text: str = "",
 ) -> list[str]:
     """Heurística: detecta 'pós em X' / 'especialização em X' / nomes longos que não estão no catálogo."""
-    known = {_normalize(n) for n, _ in catalog}
-    # aliases curtos do catálogo (última parte significativa)
-    for n, _ in catalog:
-        parts = re.split(r"\s*[–—-]\s*", n)
-        for part in parts:
-            if len(part) >= 8:
-                known.add(_normalize(part))
+    catalog_names = [n for n, _ in catalog]
+    known = {_normalize(n) for n in catalog_names}
 
     reply_denies = bool(_DENIAL_RE.search(reply or ""))
     hits: list[str] = []
     patterns = [
-        r"(?:p[oó]s(?:-gradua[cç][aã]o)?|especializa[cç][aã]o)\s+em\s+([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s,/]{3,80})",
+        r"(?:p[oó]s(?:-gradua[cç][aã]o)?|especializa[cç][aã]o)\s+em\s+([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s,/–—-]{3,80})",
         r"\b(MBA\s+Executivo\s+em\s+[A-Za-zÀ-ÿ0-9\s]{3,60})",
         r"\b(Enfermagem\s+em\s+[A-Za-zÀ-ÿ0-9\s]{3,40})",
         r"\b(Neuropsicopedagogia[A-Za-zÀ-ÿ0-9\s,]{0,60})",
         r"\b(Psicopedagogia[A-Za-zÀ-ÿ0-9\s,]{0,60})",
-        r"\b(TEA\s*[–—-]?\s*Transtorno[A-Za-zÀ-ÿ0-9\s]{0,40})",
+        r"\b(TEA\s*[–—-]?\s*Transtorno[A-Za-zÀ-ÿ0-9\s]{0,50})",
         r"\b(UTI|terapia intensiva)\b",
     ]
     for pat in patterns:
         for m in re.finditer(pat, reply, flags=re.IGNORECASE):
             raw = m.group(1).strip(" .,;:?!")
-            # corta em pontuação de frase e conectores
             raw = re.split(r"[.?!\n]", raw)[0].strip()
             raw = _trim_course_capture(raw)
             if len(raw) < 3:
                 continue
             if _is_generic_course_label(raw):
                 continue
-            # Lead pediu o curso e a agente está negando a oferta → não é inventário falso.
             if reply_denies and _lead_mentioned_course(lead_text, raw):
                 continue
-            # UTI / fora do catálogo (não confundir com "institucional")
             nr = _normalize(raw)
             if nr in ("uti", "terapia intensiva") or re.search(r"\buti\b", nr):
                 known_has_uti = any(re.search(r"\buti\b", k) for k in known)
@@ -243,11 +265,9 @@ def _find_unknown_courses(
                 ):
                     hits.append("UTI" if re.search(r"\buti\b", nr) else raw)
                 continue
-            # match se algum known contém ou é contido
-            if any(nr in k or k in nr for k in known if len(k) >= 6):
+            if _catalog_name_matches(raw, catalog_names):
                 continue
             hits.append(raw)
-    # dedupe
     seen: set[str] = set()
     uniq: list[str] = []
     for h in hits:

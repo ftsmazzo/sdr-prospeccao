@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from app.handoff_requests import handoff_registered_reply, lead_accepts_specialist
+from app.handoff_requests import (
+    can_execute_register_handoff,
+    handoff_registered_reply,
+    lead_accepts_specialist,
+    lead_refuses_handoff,
+)
 from app.veracity import (
     apply_enrollment_intent,
     claims_unbacked_action,
     lead_requests_enrollment,
     lead_says_sending_document,
+    lead_sends_cpf,
     reply_has_disallowed_price,
     reply_offers_enrollment,
 )
@@ -112,3 +118,47 @@ def test_lead_accepts_encaminhe():
     text = handoff_registered_reply(nome="André Silva", motivo="uti")
     assert "Registrei seu pedido, André" in text
     assert "especialista do polo" in text
+
+
+def test_register_handoff_gates():
+    offered = "Quer que eu encaminhe seu interesse para um especialista?"
+    ok, reason = can_execute_register_handoff(
+        last_assistant=offered,
+        user_text="Sim, por favor, encaminhe.",
+        already_registered=False,
+    )
+    assert ok and reason == "ok"
+    # precisa_marido: aceitou montar mensagem, não especialista
+    bad, why = can_execute_register_handoff(
+        last_assistant="Quer que eu monte uma mensagem para você mostrar ao marido?",
+        user_text="Sim, pode montar a mensagem.",
+        already_registered=False,
+    )
+    assert not bad
+    # aluno_atual: recusa
+    assert lead_refuses_handoff("Não quero que anotem nem que me encaminhem")
+    refused, _ = can_execute_register_handoff(
+        last_assistant="Quer que eu registre seu caso para um especialista?",
+        user_text="Não quero que anotem nem que me encaminhem, só quero o boleto.",
+        already_registered=False,
+    )
+    assert not refused
+    # já registrado
+    again, why2 = can_execute_register_handoff(
+        last_assistant=offered,
+        user_text="Sim, pode encaminhar.",
+        already_registered=True,
+    )
+    assert not again and why2 == "ja_registrado"
+
+
+def test_cpf_e_contrato_aceitam():
+    assert lead_sends_cpf("Envio agora. CPF: 123.456.789-00")
+    assert lead_requests_enrollment("Encaminha o contrato pra eu assinar.")
+    ls: dict = {
+        "curso_escolhido": "Inteligência Artificial para Negócios",
+        "graduacao": "concluida",
+        "aceite_matricula": False,
+    }
+    apply_enrollment_intent(ls, "CPF: 123.456.789-00. Encaminha o contrato.")
+    assert ls["aceite_matricula"] is True

@@ -58,20 +58,59 @@ def write_reports(
     }
     all_violations: list[tuple[str, dict]] = []
 
+    # Custo estimado (OpenRouter público aproximado, USD / 1M tokens).
+    # Heurística: ~2.5k prompt + 0.4k completion por turno agente; lead similar; juiz 1x.
+    _PRICE = {
+        "openai/gpt-4.1-mini": {"in": 0.40, "out": 1.60},
+        "openai/gpt-4.1": {"in": 2.00, "out": 8.00},
+    }
+    agent_m = str(models.get("agent") or "")
+    lead_m = str(models.get("lead") or "")
+    judge_m = str(models.get("judge") or "")
+    cost_rows: list[tuple[str, float, int]] = []
+
+    def _usd(model: str, tin: float, tout: float) -> float:
+        p = _PRICE.get(model) or {"in": 1.0, "out": 4.0}
+        return (tin * p["in"] + tout * p["out"]) / 1_000_000
+
     for r in results:
         j = r.get("judge") or {}
-        scores = [j.get(k, 0) for k in avgs]
-        mean = sum(scores) / len(scores) if scores else 0
-        for k in avgs:
-            if k in j:
-                avgs[k].append(j[k])  # noqa: PLC0206
+        if j.get("veredito") == "erro_avaliacao":
+            mean_s = "-"
+            for k in avgs:
+                pass
+            scores_disp = ["-"] * 6
+            mean = 0.0
+        else:
+            scores_disp = []
+            nums: list[float] = []
+            for k in avgs:
+                v = j.get(k)
+                if isinstance(v, (int, float)):
+                    avgs[k].append(float(v))
+                    nums.append(float(v))
+                    scores_disp.append(str(int(v)))
+                else:
+                    scores_disp.append("-")
+            mean = sum(nums) / len(nums) if nums else 0.0
+            mean_s = f"{mean:.1f}"
         n_v = len(r.get("violations") or [])
         diag = r.get("diagnostics") or {}
+        n_turns = max(
+            (h.get("turno") or 0 for h in (r.get("history") or [])),
+            default=0,
+        )
+        usd = (
+            _usd(agent_m, n_turns * 2500, n_turns * 400)
+            + _usd(lead_m, n_turns * 1800, n_turns * 250)
+            + _usd(judge_m, 3500, 600)
+        )
+        cost_rows.append((str(r.get("persona_id")), usd, int(n_turns)))
         lines.append(
             f"| {r.get('persona_id')} | {j.get('veredito', '-')} | "
-            f"{j.get('escuta', '-')} | {j.get('qualificacao', '-')} | {j.get('objecao', '-')} | "
-            f"{j.get('naturalidade', '-')} | {j.get('conducao', '-')} | "
-            f"{j.get('veracidade', '-')} | {mean:.1f} | {n_v} | "
+            f"{scores_disp[0]} | {scores_disp[1]} | {scores_disp[2]} | "
+            f"{scores_disp[3]} | {scores_disp[4]} | {scores_disp[5]} | "
+            f"{mean_s} | {n_v} | "
             f"{diag.get('regen_count', 0)} | {diag.get('stock_count', 0)} | "
             f"{diag.get('stock_repeat_count', 0)} |"
         )
@@ -84,6 +123,12 @@ def write_reports(
     for k, vals in avgs.items():
         if vals:
             lines.append(f"- **{k}**: {sum(vals) / len(vals):.2f}")
+    if cost_rows:
+        avg_cost = sum(c for _, c, _ in cost_rows) / len(cost_rows)
+        lines.append(
+            f"- **custo estimado / conversa**: US$ {avg_cost:.4f} "
+            f"(agente `{agent_m}`)"
+        )
     lines.append("")
 
     lines.append("## Justificativas de veracidade")
@@ -91,6 +136,11 @@ def write_reports(
     for r in results:
         j = r.get("judge") or {}
         just = (j.get("justificativas") or {}).get("veracidade") or ""
+        if j.get("veredito") == "erro_avaliacao":
+            lines.append(f"### `{r.get('persona_id')}` — erro_avaliacao")
+            lines.append(f"> {just or '_falha de leitura do juiz_'}")
+            lines.append("")
+            continue
         score = j.get("veracidade")
         if score is None:
             continue
