@@ -96,6 +96,7 @@ class FollowUpScheduler:
         with_checkout: bool = True,
         aluno_nome: str | None = None,
         comprador_nome: str | None = None,
+        desconto_pct: int | None = None,
     ) -> dict[str, Any]:
         # Só limpa jobs de contrato do mesmo phone (não cancela retomadas).
         removed = self.clear_for_phone(phone, types={"send_contrato"})
@@ -116,6 +117,7 @@ class FollowUpScheduler:
             "birth_date": birth_date,
             "course": course,
             "with_checkout": with_checkout,
+            "desconto_pct": desconto_pct,
             "run_at": time.time() + max(30, delay),
             "created_at": time.time(),
         }
@@ -216,6 +218,21 @@ class FollowUpScheduler:
         from app.pricing import lookup_course_hours
 
         hours = lookup_course_hours(course)
+        desconto_pct = job.get("desconto_pct")
+        if desconto_pct is None:
+            try:
+                from app.desconto_negocio import acordo_pct_from_meta
+                from app.memory import ConversationMemory
+
+                meta_now = ConversationMemory(self.settings).get_meta(phone)
+                desconto_pct = acordo_pct_from_meta(meta_now)
+            except Exception:  # noqa: BLE001
+                desconto_pct = None
+        try:
+            desconto_pct = int(desconto_pct) if desconto_pct is not None else None
+        except (TypeError, ValueError):
+            desconto_pct = None
+
         pdf = build_contrato_pdf(
             lead_name=aluno,
             cpf=cpf,
@@ -223,6 +240,7 @@ class FollowUpScheduler:
             course=course,
             agent_name=self.settings.agent_name or "Clara",
             course_hours=hours,
+            desconto_pct=desconto_pct,
         )
         if comprador and aluno and comprador.casefold() != aluno.casefold():
             caption = (
@@ -245,7 +263,12 @@ class FollowUpScheduler:
         )
 
         if job.get("with_checkout", True):
-            session = create_checkout(phone, course_label=course, lead_name=aluno)
+            session = create_checkout(
+                phone,
+                course_label=course,
+                lead_name=aluno,
+                desconto_pct=desconto_pct,
+            )
             link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
             await evo.send_text(
                 phone,

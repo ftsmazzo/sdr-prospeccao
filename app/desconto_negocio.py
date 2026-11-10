@@ -75,6 +75,73 @@ def label_avista_para_curso(course: str | None, pct: int) -> str | None:
     return f"R$ {a_vista_com_percentual(band, pct)}"
 
 
+def acordo_pct_from_meta(meta: dict[str, Any] | None) -> int | None:
+    """% à vista já oferecido/acordado no lead, se houver."""
+    if not meta:
+        return None
+    raw = meta.get("desconto_oferta_atual_pct")
+    if raw is None or raw == "":
+        return None
+    try:
+        pct = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if pct <= 0:
+        return None
+    return min(90, pct)
+
+
+def pricing_snapshot_for_course(
+    course: str | None,
+    *,
+    desconto_pct: int | None = None,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Valores para PDF/checkout — respeita acordo negociado quando existir."""
+    band = price_for_course(course)
+    pct = desconto_pct if desconto_pct is not None else acordo_pct_from_meta(meta)
+    if band is None:
+        return {
+            "band": None,
+            "desconto_pct": pct,
+            "monthly": None,
+            "monthly_label": "a partir de R$ 69,90",
+            "total_18": None,
+            "total_18_label": None,
+            "a_vista": None,
+            "a_vista_label": None,
+            "valores_line": "Mensalidade (demo): a partir de R$ 69,90",
+        }
+    tabela_pct = int(getattr(get_settings(), "desconto_tabela_avista_pct", 10) or 10)
+    if pct is None:
+        a_vista = band.a_vista
+        acordo_txt = f"À vista R$ {a_vista}"
+        stored_pct = None
+    else:
+        effective = max(0, min(90, int(pct)))
+        a_vista = a_vista_com_percentual(band, effective)
+        if effective != tabela_pct:
+            acordo_txt = f"À vista com {effective}% (acordo) R$ {a_vista}"
+        else:
+            acordo_txt = f"À vista ({effective}%) R$ {a_vista}"
+        stored_pct = effective
+    return {
+        "band": band,
+        "desconto_pct": stored_pct,
+        "monthly": band.monthly,
+        "monthly_label": band.monthly_label,
+        "total_18": band.total_18,
+        "total_18_label": band.total_18_label,
+        "a_vista": a_vista,
+        "a_vista_label": f"R$ {a_vista}",
+        "valores_line": (
+            f"Mensalidade {band.monthly_label} · "
+            f"Total em 18x {band.total_18_label} · "
+            f"{acordo_txt}"
+        ),
+    }
+
+
 def negociacao_block_for_prompt(meta: dict[str, Any], ls: dict[str, Any]) -> str:
     """Texto variável no system prompt sobre a escada de desconto."""
     s = get_settings()

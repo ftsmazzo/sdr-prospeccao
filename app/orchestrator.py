@@ -665,6 +665,8 @@ class Orchestrator:
                 reply = contract_data_request_reply(meta, ls)
             else:
                 ls["curso_escolhido"] = course
+                from app.desconto_negocio import acordo_pct_from_meta
+
                 get_scheduler().schedule_document(
                     phone=phone,
                     lead_name=aluno,
@@ -674,6 +676,7 @@ class Orchestrator:
                     birth_date=birth,
                     course=course,
                     with_checkout=True,
+                    desconto_pct=acordo_pct_from_meta(meta),
                 )
                 meta["pending_contract"] = True
                 meta["course"] = course
@@ -689,7 +692,15 @@ class Orchestrator:
             course = str(ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni").strip()
             party = resolve_contract_party(meta, ls, push_name=push_name)
             name = party["aluno_nome"] or push_name
-            session = create_checkout(phone, course_label=course, lead_name=name or "")
+            from app.desconto_negocio import acordo_pct_from_meta
+
+            session = create_checkout(
+                phone,
+                course_label=course,
+                lead_name=name or "",
+                desconto_pct=acordo_pct_from_meta(meta),
+                meta=meta,
+            )
             link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
             reply = (
                 f"{reply}\n\n"
@@ -875,6 +886,8 @@ class Orchestrator:
         birth = party["birth_date"]
         if not (phone and aluno and cpf and birth and course):
             return "", None, False
+        from app.desconto_negocio import acordo_pct_from_meta
+
         get_scheduler().schedule_document(
             phone=phone,
             lead_name=aluno,
@@ -884,6 +897,7 @@ class Orchestrator:
             birth_date=birth,
             course=course,
             with_checkout=True,
+            desconto_pct=acordo_pct_from_meta(meta),
         )
         meta["pending_contract"] = True
         meta["course"] = course

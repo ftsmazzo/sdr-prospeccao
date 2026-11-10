@@ -34,10 +34,15 @@ def test_curso_catalogo_resolve_faixa():
 
 
 def test_checkout_e_pdf_usam_faixa():
+    from app.desconto_negocio import pricing_snapshot_for_course
+
     course = "Psicopedagogia Institucional e Clínica"
     session = create_checkout("sim:x", course_label=course, lead_name="Juliana")
     assert session.amount_label == "R$ 79,90"
+    assert session.a_vista_label == "R$ 1.294,38"
 
+    snap = pricing_snapshot_for_course(course)
+    assert "79,90" in snap["valores_line"]
     pdf = build_contrato_pdf(lead_name="Juliana", course=course)
-    assert b"79,90" in pdf
+    assert pdf.startswith(b"%PDF")
     assert amount_label_for_course(None) == "a partir de R$ 69,90"

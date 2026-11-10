@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fpdf import FPDF
 
-from app.pricing import amount_label_for_course, price_for_course
+from app.desconto_negocio import pricing_snapshot_for_course
 from app.schemas import format_cpf
 
 _FONT_CANDIDATES = (
@@ -31,21 +31,15 @@ def build_contrato_pdf(
     course: str = "Pós-Graduação EAD Faveni",
     agent_name: str = "Clara",
     course_hours: int | None = None,
+    desconto_pct: int | None = None,
 ) -> bytes:
     nome = lead_name.strip() or "Interessado(a)"
     cpf_raw = cpf.strip()
     cpf_line = format_cpf(cpf_raw) if cpf_raw else "a confirmar"
     nasc = birth_date.strip() or "a confirmar"
     agent = (agent_name or "Clara").strip() or "Clara"
-    band = price_for_course(course)
-    if band:
-        valores = (
-            f"Mensalidade {band.monthly_label} · "
-            f"Total em 18x {band.total_18_label} · "
-            f"À vista {band.a_vista_label}"
-        )
-    else:
-        valores = f"Mensalidade (demo): {amount_label_for_course(course)}"
+    snap = pricing_snapshot_for_course(course, desconto_pct=desconto_pct)
+    valores = snap["valores_line"]
 
     hours_line = f"{course_hours}h" if course_hours else "conforme catálogo"
 

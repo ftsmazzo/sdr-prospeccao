@@ -545,11 +545,17 @@ def checkout_page(token: str):
     hours = lookup_course_hours(session.course_label)
     band = price_for_course(session.course_label)
     hours_html = f"{hours}h" if hours else "conforme catálogo"
-    if band:
+    a_vista_label = session.a_vista_label or (band.a_vista_label if band else None)
+    total_18_label = session.total_18_label or (band.total_18_label if band else None)
+    monthly_label = session.amount_label or (band.monthly_label if band else None)
+    if band or a_vista_label:
+        avista_txt = a_vista_label or "—"
+        if session.desconto_pct:
+            avista_txt = f"{avista_txt} ({session.desconto_pct}% acordo)"
         valores_html = (
-            f"<li>Mensalidade: <strong>{band.monthly_label}</strong></li>"
-            f"<li>Total em 18x: <strong>{band.total_18_label}</strong></li>"
-            f"<li>À vista: <strong>{band.a_vista_label}</strong></li>"
+            f"<li>Mensalidade: <strong>{monthly_label or '—'}</strong></li>"
+            f"<li>Total em 18x: <strong>{total_18_label or '—'}</strong></li>"
+            f"<li>À vista: <strong>{avista_txt}</strong></li>"
         )
     else:
         valores_html = f"<li>Mensalidade: <strong>{session.amount_label}</strong></li>"

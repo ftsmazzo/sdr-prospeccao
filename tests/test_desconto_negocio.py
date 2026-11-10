@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from app.checkout import create_checkout
 from app.desconto_negocio import (
     a_vista_com_percentual,
     exit_handoff_to_negociacao,
     ladder_pcts,
     next_desconto_pct,
+    pricing_snapshot_for_course,
     register_desconto_offer,
 )
+from app.documents import build_contrato_pdf
 from app.lead_state import advance_etapa, ensure_lead_state
 from app.pricing import BAND_620_750
 
@@ -110,3 +113,27 @@ def test_exit_handoff_rejects_not_in_handoff():
         raise AssertionError("deveria recusar fora de handoff")
     except ValueError as exc:
         assert "nao_em_handoff" in str(exc)
+
+
+def test_pricing_snapshot_acordo_20():
+    course = "Gestão de Equipes e Gestão da Produção"
+    snap = pricing_snapshot_for_course(course, desconto_pct=20)
+    assert snap["a_vista"] == "1.150,56"
+    assert "20%" in snap["valores_line"]
+    assert "acordo" in snap["valores_line"]
+
+
+def test_checkout_e_pdf_respeitam_acordo_30():
+    course = "Gestão de Equipes e Gestão da Produção"
+    session = create_checkout(
+        "sim:acordo",
+        course_label=course,
+        lead_name="Miriely",
+        desconto_pct=30,
+    )
+    assert session.desconto_pct == 30
+    assert session.a_vista_label == "R$ 1.006,74"
+    snap = pricing_snapshot_for_course(course, desconto_pct=30)
+    assert "1.006,74" in snap["valores_line"]
+    pdf = build_contrato_pdf(lead_name="Miriely", course=course, desconto_pct=30)
+    assert pdf.startswith(b"%PDF")
