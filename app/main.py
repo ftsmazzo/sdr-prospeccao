@@ -239,6 +239,7 @@ async def get_lead(phone: str, request: Request):
         "full_name": meta.get("full_name"),
         "has_cpf": bool(meta.get("cpf")),
         "course": meta.get("course"),
+        "matriculas": meta.get("matriculas") or [],
         "history_len": len(history),
         "summary": summarize_lead(meta),
     }
@@ -322,22 +323,26 @@ async def rewind_lead(phone: str, request: Request):
         if needle in str(msg.get("content") or "").casefold():
             cut_at = i
             break
-    if cut_at is None:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "needle_nao_encontrado",
-                "phone": digits,
-                "history_len": len(history),
-            },
-            status_code=404,
-        )
-
-    kept = history[:cut_at]
-    memory.replace_history(digits, kept)
-
     meta = memory.get_meta(digits)
     ls = ensure_lead_state(meta)
+    force_meta = bool(body.get("force_meta"))
+    cut_at = cut_at  # type: ignore[name-defined]
+    kept = history
+    if cut_at is None:
+        if not force_meta:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "needle_nao_encontrado",
+                    "phone": digits,
+                    "history_len": len(history),
+                },
+                status_code=404,
+            )
+    else:
+        kept = history[:cut_at]
+        memory.replace_history(digits, kept)
+
     matriculas = list(meta.get("matriculas") or [])
     enrolled_course = None
     for item in matriculas:
@@ -346,15 +351,18 @@ async def rewind_lead(phone: str, request: Request):
             break
     if not enrolled_course and meta.get("course"):
         enrolled_course = str(meta["course"])
-        if not matriculas:
-            matriculas = [
-                {
-                    "curso": enrolled_course,
-                    "aluno_nome": meta.get("full_name") or ls.get("nome"),
-                    "status": "confirmada",
-                }
-            ]
-            meta["matriculas"] = matriculas
+    if enrolled_course and not matriculas:
+        matriculas = [
+            {
+                "curso": enrolled_course,
+                "aluno_nome": meta.get("full_name") or ls.get("nome"),
+                "status": "confirmada",
+            }
+        ]
+    if matriculas:
+        meta["matriculas"] = matriculas
+    if enrolled_course:
+        meta["course"] = enrolled_course
 
     ls["aluno_e_terceiro"] = False
     ls["aluno_nome"] = None
