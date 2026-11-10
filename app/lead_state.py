@@ -411,10 +411,21 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
 
     mark_desconto_respondido = False
     if perguntou:
-        if meta.get("desconto_respondido"):
+        from app.desconto_negocio import next_desconto_pct, register_desconto_offer
+
+        pct = next_desconto_pct(meta)
+        if pct is None:
+            # Escada esgotada (ou só tabela sem demo) → handoff
             return _enter_handoff(meta, "desconto_insistencia")
         _ensure_preco_objection(ls)
+        register_desconto_offer(meta, pct)
         mark_desconto_respondido = True
+        # Se estava em handoff e ainda há gordura, sai para negociar.
+        if prev == "handoff_humano":
+            from app.desconto_negocio import exit_handoff_to_negociacao
+
+            exit_handoff_to_negociacao(meta)
+            prev = meta.get("etapa") or "objecao"
 
     # Já em handoff: etapa mantém; flags novas reforçam, sem mexer em etapa_antes_handoff
     if prev == "handoff_humano":

@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     active_send_max_gap_seconds: int = 120
     primeiro_contato_delay_seconds: int = 45
 
+    # Negociação de desconto à vista (demo / métrica do cliente)
+    demo_negocio_desconto: bool = False
+    desconto_tabela_avista_pct: int = 10
+    desconto_negocio_alvo_pct: int = 20
+    desconto_negocio_max_pct: int = 30
+
     # TTL memória conversa/meta (segundos) — 30 dias
     memory_ttl_seconds: int = 60 * 60 * 24 * 30
     memory_max_messages: int = 30

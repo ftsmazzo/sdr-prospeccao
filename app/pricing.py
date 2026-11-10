@@ -107,4 +107,10 @@ def allowed_money_amounts() -> frozenset[str]:
         vals.add(b.monthly)
         vals.add(b.total_18)
         vals.add(b.a_vista)
+    try:
+        from app.desconto_negocio import all_negociated_avista_tokens
+
+        vals |= all_negociated_avista_tokens()
+    except Exception:  # noqa: BLE001
+        pass
     return frozenset(vals)

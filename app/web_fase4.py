@@ -75,6 +75,48 @@ def register_fase4_routes(app: FastAPI, *, admin_authorized) -> None:
             )
         return resp
 
+    @app.post("/admin/leads/{phone}/retomar-negociacao")
+    async def retomar_negociacao(phone: str, request: Request):
+        """Sai do handoff de desconto e agenda retomada comercial (demo)."""
+        if not admin_authorized(request):
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        from app.desconto_negocio import exit_handoff_to_negociacao
+        from app.followups import get_scheduler
+        from app.memory import ConversationMemory
+        from app.outbound_cadence import cancel_retomadas
+
+        settings = get_settings()
+        digits = "".join(ch for ch in phone if ch.isdigit())
+        mem = ConversationMemory(settings)
+        meta = mem.get_meta(digits)
+        if not meta:
+            return JSONResponse({"ok": False, "error": "lead_nao_encontrado"}, status_code=404)
+        etapa = exit_handoff_to_negociacao(meta)
+        sched = get_scheduler()
+        cancel_retomadas(digits, sched)
+        # Retomada em ~10s (demo): sem oferecer desconto de cara.
+        import time
+
+        sched.schedule_job(
+            phone=digits,
+            job_type="retomada",
+            run_at=time.time() + 10,
+            payload={
+                "trigger": "comercial_retorno",
+                "step": 1,
+                "max_steps": 1,
+            },
+        )
+        meta["proxima_retomada_at"] = time.time() + 10
+        mem.set_meta(digits, meta)
+        return {
+            "ok": True,
+            "phone": digits,
+            "etapa": etapa,
+            "desconto_negociacao_nivel": meta.get("desconto_negociacao_nivel"),
+            "scheduled_in_seconds": 10,
+        }
+
     @app.post("/admin/leads/{phone}/force-primeiro-contato")
     async def force_primeiro_contato(phone: str, request: Request):
         """Reagenda e/ou dispara primeiro contato (recuperação de demo)."""

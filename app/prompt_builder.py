@@ -180,6 +180,9 @@ def build_system_prompt_parts(
         "pending_contract": bool(meta_flags.get("pending_contract")),
         "contract_sent": bool(meta_flags.get("contract_sent")),
         "desconto_respondido": bool(meta_flags.get("desconto_respondido")),
+        "desconto_negociacao_nivel": meta_flags.get("desconto_negociacao_nivel"),
+        "desconto_oferta_atual_pct": meta_flags.get("desconto_oferta_atual_pct"),
+        "comercial_retorno": bool(meta_flags.get("comercial_retorno")),
         "handoff_reason": meta_flags.get("handoff_reason"),
         "handoff_avisado": bool(meta_flags.get("handoff_avisado")),
         "handoff_registrado": bool(meta_flags.get("handoff_registrado")),
@@ -197,6 +200,9 @@ def build_system_prompt_parts(
             "está aqui. Em caso de conflito, lead_state/compra_atual prevalece.\n"
             f"{briefing}\n\n"
         )
+    from app.desconto_negocio import negociacao_block_for_prompt
+
+    negociacao = negociacao_block_for_prompt(meta_flags, lead_state)
     compra_blocks = (
         f"{format_matriculas_block(meta_flags.get('matriculas'))}\n"
         f"{format_compra_atual_block(meta_flags.get('compra_atual'))}\n\n"
@@ -204,6 +210,7 @@ def build_system_prompt_parts(
     variable = (
         f"{briefing_block}"
         f"{compra_blocks}"
+        f"{negociacao}\n\n"
         "## Estado atual do lead (somente leitura; atualize via state_update)\n"
         f"{json.dumps(state_view, ensure_ascii=False, indent=2)}\n"
     )

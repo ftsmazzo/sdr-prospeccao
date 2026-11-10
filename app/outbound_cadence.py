@@ -20,10 +20,11 @@ _DEFAULT_DELAYS = {
 }
 
 _DEMO_DELAYS = {
-    "funil_silence": (120, 240, 360),  # 2, 4, 6 min
+    "funil_silence": (180, 600, 1200),  # 3 / 10 / 20 min — menos agressivo
     "vou_pensar": (180,),
-    "contrato": (180, 360),
-    "primeiro_contato": (180, 360),
+    "contrato": (240, 600),
+    # Uma só retomada após primeiro contato (evita rajada de 2 msgs)
+    "primeiro_contato": (300,),
 }
 
 _THINK_DATE_RE = re.compile(
@@ -206,12 +207,18 @@ async def compose_active_message(
             greet = f"Oi{', ' + first if first else ''}! "
             return (
                 f"{greet}Sou a {agent}, do Polo Faveni Catanduva. "
-                f"Vi seu interesse em {interesse} pelo {origem}. "
-                "O que te motivou a buscar essa pós agora?"
+                f"Vi seu interesse na pós em {interesse} pelo {origem}. "
+                "Você já concluiu a graduação e quer seguir com essa especialização?"
             )
-        # retomada
         curso = ls.get("curso_escolhido") or ls.get("curso_recomendado") or interesse
         etapa = meta.get("etapa") or ""
+        step = int(job.get("step") or 0)
+        if meta.get("comercial_retorno") and step <= 1:
+            return (
+                f"{first + ', ' if first else ''}consegui retomar seu caso da pós "
+                f"em {curso} aqui no polo. Ainda faz sentido a gente continuar "
+                "de onde paramos?"
+            )
         if "contrato" in trigger:
             return (
                 f"{first + ', ' if first else ''}conseguiu olhar o contrato da pós "
@@ -222,9 +229,15 @@ async def compose_active_message(
                 f"{first + ', ' if first else ''}quando quiser a gente retoma os dados "
                 f"pra eu preparar o contrato de {curso}. Prefere seguir agora?"
             )
+        if step <= 1:
+            return (
+                f"{first + ', ' if first else ''}retomando a conversa sobre a pós "
+                f"em {curso}: ainda está no seu radar se matricular?"
+            )
         return (
-            f"{first + ', ' if first else ''}retomando de onde paramos sobre {curso}: "
-            "ainda faz sentido pra você, ou mudou alguma coisa?"
+            f"{first + ', ' if first else ''}só pra não te perder: sobre a pós "
+            f"em {curso}, prefere que eu te ajude com valor/condição ou com o "
+            "próximo passo da matrícula?"
         )
 
     if not settings.openrouter_api_key:
@@ -232,26 +245,43 @@ async def compose_active_message(
 
     try:
         llm = OpenRouterClient(settings)
+        envios = meta.get("active_sends") or []
+        enviados = "; ".join(
+            str(e.get("text") or "")[:80]
+            for e in envios[-3:]
+            if isinstance(e, dict)
+        ) or "(nenhum envio ativo anterior)"
         if jtype == "primeiro_contato":
             system = (
-                f"Você é {agent}, consultora do Polo Faveni Catanduva no WhatsApp. "
-                "Escreva a PRIMEIRA mensagem de prospecção: apresente-se, mencione o "
-                f"interesse ({interesse}) pela origem ({origem}), UMA pergunta. "
-                "Sem pitch, sem preço, sem lista. Tom leve. Só o texto da mensagem."
+                f"Você é {agent}, consultora de matrículas do Polo Faveni Catanduva. "
+                "Escreva a PRIMEIRA mensagem de prospecção de PÓS-GRADUAÇÃO EAD: "
+                "apresente-se, diga que viu o interesse na pós/área "
+                f"({interesse}) pelo {origem}, e faça UMA pergunta de funil "
+                "(graduação concluída? objetivo com a especialização?). "
+                "Deixe claro que o assunto é matrícula na pós — NÃO inicie bate-papo "
+                "temático genérico. Sem preço, sem lista de cursos. Só o texto."
             )
         else:
             system = (
-                f"Você é {agent}. Escreva UMA retomada curta no WhatsApp, baseada no "
-                f"briefing e na etapa {meta.get('etapa')}. Retome o ponto exato. "
-                "NUNCA diga 'oi, sumiu?' nem repita a última mensagem. Só o texto."
+                f"Você é {agent}. Escreva UMA retomada curta no WhatsApp. "
+                f"Etapa={meta.get('etapa')}. Retome o ponto de MATRÍCULA/curso. "
+                "NUNCA diga 'oi, sumiu?'. NUNCA mencione material, PDF, resumo, "
+                "apostila ou documento que você NÃO enviou de fato. "
+                "NÃO invente que mandou algo para o lead analisar. "
+                "Se for retorno comercial, retome com calor SEM despejar desconto "
+                "na primeira frase. Só o texto da mensagem."
             )
         user = (
             f"Nome: {nome or 'lead'}\n"
             f"Etapa: {meta.get('etapa')}\n"
             f"Trigger: {trigger}\n"
+            f"Step: {job.get('step')}\n"
+            f"comercial_retorno: {bool(meta.get('comercial_retorno'))}\n"
             f"Briefing: {briefing or '(vazio)'}\n"
             f"Curso/interesse: {interesse}\n"
-            f"Lead_state: graduacao={ls.get('graduacao')} curso={ls.get('curso_escolhido')}"
+            f"Envios ativos anteriores: {enviados}\n"
+            f"Lead_state: graduacao={ls.get('graduacao')} "
+            f"curso={ls.get('curso_escolhido')} objecao={ls.get('objecao_ativa')}"
         )
         text = await llm.chat(
             [
@@ -268,10 +298,15 @@ async def compose_active_message(
         if sends and isinstance(sends[-1], dict):
             last = str(sends[-1].get("text") or "")
         if out and out.casefold() != last.casefold():
-            # Marca esfriou se última retomada da série
+            # Só esfria após série de silêncio — não em retorno comercial / vou_pensar.
             step = int(job.get("step") or 0)
             max_steps = int(job.get("max_steps") or 0)
-            if jtype == "retomada" and max_steps and step >= max_steps:
+            if (
+                jtype == "retomada"
+                and max_steps
+                and step >= max_steps
+                and "silence" in trigger
+            ):
                 meta["etapa"] = "esfriou"
             return out
     except Exception:  # noqa: BLE001
@@ -279,6 +314,11 @@ async def compose_active_message(
     fb = _fallback()
     step = int(job.get("step") or 0)
     max_steps = int(job.get("max_steps") or 0)
-    if jtype == "retomada" and max_steps and step >= max_steps:
+    if (
+        jtype == "retomada"
+        and max_steps
+        and step >= max_steps
+        and "silence" in trigger
+    ):
         meta["etapa"] = "esfriou"
     return fb
