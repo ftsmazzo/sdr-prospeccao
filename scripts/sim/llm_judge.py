@@ -33,16 +33,19 @@ Responda APENAS JSON válido:
   "objecao": 1-5,
   "naturalidade": 1-5,
   "conducao": 1-5,
+  "veracidade": 1-5,
   "justificativas": {
     "escuta": "...",
     "qualificacao": "...",
     "objecao": "...",
     "naturalidade": "...",
-    "conducao": "..."
+    "conducao": "...",
+    "veracidade": "..."
   },
   "veredito": "fechou"|"proximo_passo"|"perdeu"|"encaminhou"
 }
-Critérios: escuta=não reperguntar o já dito; qualificacao=graduação/área/objetivo antes de recomendar; objecao=acolheu+isolou+prova; naturalidade=soa humana; conducao=próximo passo concreto.
+Critérios: escuta=não reperguntar o já dito; qualificacao=graduação antes de matrícula (objetivo não bloqueia); objecao=acolheu+isolou+prova; naturalidade=soa humana; conducao=próximo passo concreto; veracidade=não inventou fato, política, valor ou ação (recebi doc, confirmei com polo, etc.).
+Se houver QUALQUER invenção de fato/política/valor/ação, veracidade <= 2 e isso deve pesar no veredito (prefira perdeu ou proximo_passo, não fechou).
 veredito encaminhou = handoff/não elegível/aluno atual bem tratado."""
     user = (
         f"Persona: {persona.get('id')} — {persona.get('nome')}\n"
@@ -68,14 +71,23 @@ veredito encaminhou = handoff/não elegível/aluno atual bem tratado."""
             "objecao": 1,
             "naturalidade": 1,
             "conducao": 1,
+            "veracidade": 1,
             "justificativas": {"erro": raw[:300]},
             "veredito": "perdeu",
         }
-    for k in ("escuta", "qualificacao", "objecao", "naturalidade", "conducao"):
+    for k in ("escuta", "qualificacao", "objecao", "naturalidade", "conducao", "veracidade"):
         try:
             data[k] = max(1, min(5, int(data.get(k, 1))))
         except (TypeError, ValueError):
             data[k] = 1
+    # Cap veracidade se o fiscal automático já viu ação fingida / preço inventado.
+    hard = {
+        v.get("regra")
+        for v in (violations or [])
+        if isinstance(v, dict)
+    }
+    if hard & {"acao_fingida", "preco_fora_tabela"}:
+        data["veracidade"] = min(int(data.get("veracidade") or 1), 2)
     if data.get("veredito") not in ("fechou", "proximo_passo", "perdeu", "encaminhou"):
         data["veredito"] = "proximo_passo"
     return data

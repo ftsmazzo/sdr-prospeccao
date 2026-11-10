@@ -3,7 +3,7 @@
 O lead já escolheu o curso e aceitou seguir (`curso_escolhido` + `aceite_matricula`).
 
 - Esta é a **única** etapa em que você pede nome completo, CPF e data de nascimento.
-- Antes de pedir dados, resuma em UMA frase o que foi combinado (curso + mensalidade da faixa na tabela + próximo passo).
+- Antes de pedir dados, resuma em UMA frase o que foi combinado (curso + mensalidade da faixa **ou** valor à vista total se combinado assim + próximo passo). Não chame o à vista de “mensalidade”.
 - Depois peça, com tom leve e de uma vez: nome completo, CPF e data de nascimento.
 - Documentação complementar (RG/CNH, diploma ou declaração, histórico, certidão) pode ser enviada depois da confirmação.
 - Se o lead hesitar ou quiser analisar com calma: trate como objeção (não force dados); responda dúvidas e, se for tempo, pergunte horas/semana.

@@ -9,6 +9,11 @@ from typing import Any
 from app.lead_state import reply_looks_like_promise
 from app.pricing import allowed_money_amounts
 from app.speech import requests_personal_data
+from app.veracity import (
+    claims_unbacked_action,
+    lead_refuses_question,
+    reply_asks_objetivo,
+)
 
 _PRICE_RE = re.compile(r"R\$\s*([\d.]+,\d{2})", re.IGNORECASE)
 _COURSE_LINE_RE = re.compile(r"^-\s*(.+?)\s*[—–-]\s*(\d+)\s*h", re.MULTILINE)
@@ -241,6 +246,13 @@ def judge_agent_reply(
     action_executed: bool,
     catalog: list[tuple[str, int]] | None = None,
     lead_text: str = "",
+    has_media: bool = False,
+    just_entered_handoff: bool = False,
+    handoff_avisado: bool = False,
+    delivery_ran: bool = False,
+    prev_agent_asked_objetivo: bool = False,
+    lead_refused_objetivo: bool = False,
+    asked_objetivo_after_refuse_count: int = 0,
 ) -> list[dict[str, Any]]:
     catalog = catalog or load_catalog()
     text = (reply or "").strip()
@@ -259,6 +271,23 @@ def judge_agent_reply(
         amount = m.group(1).strip()
         if amount not in allowed:
             add("preco_fora_tabela", m.group(0))
+
+    fake = claims_unbacked_action(
+        text,
+        has_media=has_media,
+        just_entered_handoff=just_entered_handoff,
+        handoff_avisado=handoff_avisado,
+        delivery_ran=delivery_ran or action_executed,
+    )
+    if fake:
+        add("acao_fingida", f"{fake}: {text[:100]}")
+
+    if lead_refused_objetivo and reply_asks_objetivo(text):
+        # 2ª+ pergunta de objetivo após recusa
+        if asked_objetivo_after_refuse_count >= 1 or prev_agent_asked_objetivo:
+            add("pergunta_repetida", text[:120])
+    elif lead_refuses_question(lead_text) and reply_asks_objetivo(text) and prev_agent_asked_objetivo:
+        add("pergunta_repetida", text[:120])
 
     # perguntas: resposta inteira
     q_count = text.count("?")

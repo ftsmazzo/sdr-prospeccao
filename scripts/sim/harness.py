@@ -11,6 +11,7 @@ from scripts.sim.auto_judge import judge_agent_reply, load_catalog, looks_like_f
 from scripts.sim.lead import LEAD_TEMPERATURE, generate_lead_message
 from scripts.sim.llm_judge import JUDGE_TEMPERATURE, judge_conversation
 from scripts.sim.mocks import MockEvolution, MockScheduler
+from app.veracity import lead_refuses_question, reply_asks_objetivo
 
 
 def patch_scheduler(mock: MockScheduler) -> None:
@@ -104,6 +105,9 @@ async def run_persona(
     stock_repeats: list[dict[str, Any]] = []
     prev_stock_norm: str | None = None
     prev_stock_turno: int | None = None
+    prev_agent_asked_objetivo = False
+    lead_refused_objetivo = False
+    asked_objetivo_after_refuse_count = 0
 
     # limpa memória residual do phone
     orch.memory.clear(phone)
@@ -138,6 +142,11 @@ async def run_persona(
         meta_before = orch.memory.get_meta(phone)
         ls_before = meta_before.get("lead_state") or {}
         aceite_before = bool(ls_before.get("aceite_matricula"))
+        etapa_antes = meta_before.get("etapa") or "abertura"
+        handoff_avisado_before = bool(meta_before.get("handoff_avisado"))
+
+        if lead_refuses_question(lead_text) and prev_agent_asked_objetivo:
+            lead_refused_objetivo = True
 
         orch.last_reply_diag = {}
         reply = await orch.handle_inbound(
@@ -189,6 +198,10 @@ async def run_persona(
 
         history.append({"role": "agent", "turno": turn, "text": agent_text})
 
+        meta = orch.memory.get_meta(phone)
+        just_entered_handoff = (
+            meta.get("etapa") == "handoff_humano" and etapa_antes != "handoff_humano"
+        )
         turn_violations = judge_agent_reply(
             agent_text,
             turno=turn,
@@ -196,10 +209,22 @@ async def run_persona(
             action_executed=action_executed,
             catalog=catalog,
             lead_text=lead_text,
+            has_media=False,
+            just_entered_handoff=just_entered_handoff,
+            handoff_avisado=handoff_avisado_before,
+            delivery_ran=action_executed,
+            prev_agent_asked_objetivo=prev_agent_asked_objetivo,
+            lead_refused_objetivo=lead_refused_objetivo,
+            asked_objetivo_after_refuse_count=asked_objetivo_after_refuse_count,
         )
         violations.extend(turn_violations)
 
-        meta = orch.memory.get_meta(phone)
+        if reply_asks_objetivo(agent_text):
+            if lead_refused_objetivo:
+                asked_objetivo_after_refuse_count += 1
+            prev_agent_asked_objetivo = True
+        else:
+            prev_agent_asked_objetivo = False
         if farewell_streak >= 2:
             outcome = "lead_encerrou"
             break

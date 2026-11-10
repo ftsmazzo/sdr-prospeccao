@@ -43,12 +43,19 @@ def write_reports(
     lines.append("## Tabela por cenário")
     lines.append("")
     lines.append(
-        "| Cenário | Veredito | Escuta | Qualif | Objeção | Nat | Condução | Média | "
+        "| Cenário | Veredito | Escuta | Qualif | Objeção | Nat | Condução | Verac. | Média | "
         "Violações | Regen | Stock | Stock×2 |"
     )
-    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
-    avgs = {"escuta": [], "qualificacao": [], "objecao": [], "naturalidade": [], "conducao": []}
+    avgs = {
+        "escuta": [],
+        "qualificacao": [],
+        "objecao": [],
+        "naturalidade": [],
+        "conducao": [],
+        "veracidade": [],
+    }
     all_violations: list[tuple[str, dict]] = []
 
     for r in results:
@@ -63,7 +70,8 @@ def write_reports(
         lines.append(
             f"| {r.get('persona_id')} | {j.get('veredito', '-')} | "
             f"{j.get('escuta', '-')} | {j.get('qualificacao', '-')} | {j.get('objecao', '-')} | "
-            f"{j.get('naturalidade', '-')} | {j.get('conducao', '-')} | {mean:.1f} | {n_v} | "
+            f"{j.get('naturalidade', '-')} | {j.get('conducao', '-')} | "
+            f"{j.get('veracidade', '-')} | {mean:.1f} | {n_v} | "
             f"{diag.get('regen_count', 0)} | {diag.get('stock_count', 0)} | "
             f"{diag.get('stock_repeat_count', 0)} |"
         )

@@ -16,4 +16,5 @@ Ordem das descobertas (pule o que o lead já respondeu; nunca pergunte de novo):
 - Fora desse atalho: NÃO pule a ordem nem recomende ainda — continue o que falta (graduação → área → objetivo).
 - Se `graduacao=cursando`: explique com empatia que a pós exige diploma ou declaração de conclusão; não peça CPF nem ofereça matrícula de pós agora; mantenha o relacionamento.
 - Se `graduacao=nao_tem`: o sistema irá para nao_elegivel.
-- Só marque `curso_escolhido` / `aceite_matricula` aqui se o lead estiver claramente decidido (curso do catálogo + pedido de matrícula).
+- Se `graduacao` ainda for null, **não** ofereça matrícula nem passo a passo — pergunte a graduação primeiro.
+- Só marque `curso_escolhido` / `aceite_matricula` aqui se o lead estiver claramente decidido (curso do catálogo + pedido de matrícula). Objetivo recusado não impede avançar.

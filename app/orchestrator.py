@@ -42,6 +42,13 @@ from app.speech import (
     requests_personal_data,
     to_spoken_script,
 )
+from app.veracity import (
+    apply_enrollment_intent,
+    claims_unbacked_action,
+    mark_refused_fields,
+    reply_has_disallowed_price,
+    reply_offers_enrollment,
+)
 
 logger = logging.getLogger("edu.orchestrator")
 
@@ -98,6 +105,26 @@ _REGEN_MOTIVOS = {
     "quase_igual": (
         "Sua resposta ficou quase idêntica à anterior. Reescreva com outras palavras "
         "e avance a conversa com uma pergunta ou próximo passo diferente."
+    ),
+    "acao_fingida": (
+        "Você afirmou uma ação que NÃO aconteceu no sistema "
+        "(receber documento, confirmar com o polo, consultar, encaminhar/reforçar "
+        "com especialista, já ter enviado contrato). "
+        "Reescreva SEM fingir: se falar de documento, diga 'assim que chegar, eu te confirmo'; "
+        "se o curso não está na lista, diga 'na nossa lista atual não tem; um especialista "
+        "pode confirmar se há algo novo'; em handoff, avise UMA vez que um especialista "
+        "vai dar sequência — sem repetir 'vou reforçar'."
+    ),
+    "preco_fora_tabela": (
+        "Você citou um valor que NÃO está na tabela precos.md. "
+        "Use SOMENTE mensalidade / total 18x / à vista da faixa do curso. "
+        "À vista é o VALOR TOTAL da tabela — nunca divida por meses nem invente 'média mensal'. "
+        "Não chame o valor à vista de 'mensalidade'."
+    ),
+    "matricula_sem_graduacao": (
+        "Você ofereceu matrícula/passo a passo sem a graduação confirmada no estado. "
+        "Pergunte primeiro se a graduação já está concluída (uma pergunta só). "
+        "Não ofereça matrícula antes disso."
     ),
 }
 
@@ -293,6 +320,8 @@ class Orchestrator:
         delivery_ran: bool,
         blocked_promise_reason: str | None,
         last_assistant: str,
+        has_media: bool = False,
+        just_entered_handoff: bool = False,
     ) -> str | None:
         if blocked_promise_reason:
             return blocked_promise_reason
@@ -301,6 +330,20 @@ class Orchestrator:
                 return "promessa_lembrete"
             if reply_looks_like_delivery_promise(reply):
                 return "promessa_sem_acao"
+        fake = claims_unbacked_action(
+            reply,
+            has_media=has_media,
+            just_entered_handoff=just_entered_handoff,
+            handoff_avisado=bool(meta.get("handoff_avisado")),
+            delivery_ran=delivery_ran,
+        )
+        if fake:
+            return "acao_fingida"
+        if reply_has_disallowed_price(reply):
+            return "preco_fora_tabela"
+        ls = meta.get("lead_state") or {}
+        if reply_offers_enrollment(reply) and not ls.get("graduacao"):
+            return "matricula_sem_graduacao"
         etapa = meta.get("etapa") or ""
         if etapa != "fechamento" and requests_personal_data(reply):
             return "dados_antes_fechamento"
@@ -471,6 +514,14 @@ class Orchestrator:
 
         return reply, course, blocked_promise_reason, delivery_ran
 
+    def _maybe_mark_handoff_avisado(
+        self, meta: dict, *, just_entered_handoff: bool
+    ) -> None:
+        if meta.get("etapa") == "handoff_humano" and (
+            just_entered_handoff or meta.get("handoff_reason")
+        ):
+            meta["handoff_avisado"] = True
+
     async def _finalize_reply(
         self,
         *,
@@ -481,6 +532,8 @@ class Orchestrator:
         course: str | None,
         blocked_promise_reason: str | None,
         delivery_ran: bool,
+        has_media: bool = False,
+        just_entered_handoff: bool = False,
     ) -> str:
         self.last_reply_diag = {
             "regen": False,
@@ -496,6 +549,8 @@ class Orchestrator:
             delivery_ran=delivery_ran,
             blocked_promise_reason=blocked_promise_reason,
             last_assistant=last_assistant,
+            has_media=has_media,
+            just_entered_handoff=just_entered_handoff,
         )
         if reason:
             self.last_reply_diag["regen"] = True
@@ -511,12 +566,19 @@ class Orchestrator:
                 still = self._reply_needs_regen(
                     regenerated,
                     meta,
-                    delivery_ran=False,
+                    delivery_ran=delivery_ran
+                    if reason not in ("promessa_sem_acao", "promessa_lembrete")
+                    else False,
                     blocked_promise_reason=still_blocked,
                     last_assistant=last_assistant,
+                    has_media=has_media,
+                    just_entered_handoff=just_entered_handoff,
                 )
                 if not still:
                     meta["stock_streak"] = 0
+                    self._maybe_mark_handoff_avisado(
+                        meta, just_entered_handoff=just_entered_handoff
+                    )
                     return regenerated
                 logger.info("regen ainda viola (%s) — stock", still)
                 stock = self._apply_stock_fallback(meta, still or reason, regenerated)
@@ -525,6 +587,9 @@ class Orchestrator:
                 self.last_reply_diag["stock_text"] = stock
                 if meta.get("handoff_reason") == "loop_stock":
                     self.last_reply_diag["stock_reason"] = "loop_stock"
+                self._maybe_mark_handoff_avisado(
+                    meta, just_entered_handoff=just_entered_handoff
+                )
                 return stock
             stock = self._apply_stock_fallback(meta, reason, reply)
             self.last_reply_diag["stock"] = True
@@ -532,8 +597,14 @@ class Orchestrator:
                 "loop_stock" if meta.get("handoff_reason") == "loop_stock" else reason
             )
             self.last_reply_diag["stock_text"] = stock
+            self._maybe_mark_handoff_avisado(
+                meta, just_entered_handoff=just_entered_handoff
+            )
             return stock
         meta["stock_streak"] = 0
+        self._maybe_mark_handoff_avisado(
+            meta, just_entered_handoff=just_entered_handoff
+        )
         return reply
 
     async def handle_inbound(
@@ -604,15 +675,21 @@ class Orchestrator:
             # não assume nome legal; só contexto
             pass
 
-        etapa = meta.get("etapa") or "abertura"
+        last_assistant = self._last_assistant_text(phone)
+        mark_refused_fields(meta, lead_text=user_text, last_agent=last_assistant)
+        ls = meta.get("lead_state") or ls
+
+        etapa_antes = meta.get("etapa") or "abertura"
         system = build_system_prompt(
-            etapa=etapa,
+            etapa=etapa_antes,
             lead_state=ls,
             meta_flags={
                 "pending_contract": meta.get("pending_contract"),
                 "contract_sent": meta.get("contract_sent"),
                 "desconto_respondido": meta.get("desconto_respondido"),
                 "handoff_reason": meta.get("handoff_reason"),
+                "handoff_avisado": meta.get("handoff_avisado"),
+                "campos_recusados": meta.get("campos_recusados") or [],
             },
             agent_name=self.settings.agent_name,
             agent_gender=self.settings.agent_gender,
@@ -633,11 +710,15 @@ class Orchestrator:
                     "content": "O lead mandou ÁUDIO (já transcrito). Mantenha empatia e calor.",
                 }
             )
-        if has_image or has_document:
+        has_media = bool(has_image or has_document)
+        if has_media:
             messages.append(
                 {
                     "role": "system",
-                    "content": "O lead enviou imagem/documento. Confirme o recebimento e siga o funil.",
+                    "content": (
+                        "O lead enviou imagem/documento NESTE turno. "
+                        "Só agora você pode confirmar o recebimento."
+                    ),
                 }
             )
         messages.extend(history)
@@ -648,8 +729,12 @@ class Orchestrator:
         # merge fatos (sem etapa); capturar flags de turno antes do advance zerar
         lead_irritado_turn = bool(agent.state_update.get("lead_irritado"))
         merge_state_update(ls, agent.state_update)
+        apply_enrollment_intent(ls, user_text)
         meta["lead_state"] = ls
         advance_etapa(meta, handoff_max_objecoes=self.settings.handoff_max_objecoes)
+        just_entered_handoff = (
+            meta.get("etapa") == "handoff_humano" and etapa_antes != "handoff_humano"
+        )
         if meta.get("etapa") == "handoff_humano":
             logger.info("handoff_humano phone=%s summary=%s", phone, summarize_lead(meta))
 
@@ -664,6 +749,8 @@ class Orchestrator:
             course=course,
             blocked_promise_reason=blocked_promise_reason,
             delivery_ran=delivery_ran,
+            has_media=has_media,
+            just_entered_handoff=just_entered_handoff,
         )
         self.memory.set_meta(phone, meta)
 

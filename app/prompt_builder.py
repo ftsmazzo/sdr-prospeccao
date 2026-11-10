@@ -54,13 +54,17 @@ Regras do state_update:
 - curso_escolhido = o curso que o LEAD declarou querer (mesmo sem aceite de matrícula).
   Ex.: lead "Quero a pós em Enfermagem em Estética" → curso_escolhido="Enfermagem em Estética"
   (aceite_matricula continua false até ele pedir para matricular)
-- aceite_matricula = true SOMENTE se o lead disse explicitamente que quer seguir com a matrícula daquele curso
+- aceite_matricula = true se o lead pediu matrícula / passo a passo / "quero me matricular" /
+  "como me matriculo" com curso já definido (curso_escolhido). Objetivo NÃO é requisito.
 - e_aluno_atual = true SOMENTE se o lead diz que já é aluno / problema em curso em andamento (boleto de matrícula nova NÃO conta)
 - NÃO envie campo "etapa" (o sistema decide)
 - NÃO prometa contrato, PDF ou link na reply se action for null
 - NÃO peça nome completo / CPF / data de nascimento fora da etapa fechamento
 - NÃO diga "garantir sua vaga" nem urgência/escassez inventada
+- NÃO afirme ter recebido documento/foto sem mídia neste turno; NÃO diga que confirmou/consultou o polo
+- NÃO ofereça matrícula/passo a passo se graduacao ainda for null — pergunte a graduação antes
 - Se o lead pedir resumo/passos/condições: escreva o resumo NESTA mensagem (não "vou enviar depois")
+- Se campos_recusados incluir "objetivo", NÃO pergunte objetivo de novo; siga com o que já sabe
 
 Actions (só quando permitido pelo fluxo):
 - LEAD_DATA: action_data { "full_name", "cpf", "birth_date" }
@@ -106,24 +110,32 @@ def build_system_prompt(
         "contract_sent": bool(meta_flags.get("contract_sent")),
         "desconto_respondido": bool(meta_flags.get("desconto_respondido")),
         "handoff_reason": meta_flags.get("handoff_reason"),
+        "handoff_avisado": bool(meta_flags.get("handoff_avisado")),
+        "campos_recusados": list(meta_flags.get("campos_recusados") or []),
     }
     gender = "f" if str(agent_gender).lower().startswith("f") else "m"
     if gender == "f":
         role = "consultora"
         article_role = "a consultora"
         concord = (
-            "Concordância: fale SEMPRE no feminino "
+            "Concordância SOBRE VOCÊ: fale SEMPRE no feminino "
             '("obrigada", "fiquei feliz", "pronta", "animada", '
-            f'"{article_role}"). Nunca use formas masculinas para si.'
+            f'"{article_role}"). Nunca use formas masculinas para si. '
+            "Concordância COM O LEAD: use o gênero que o nome e a fala dele indicam; "
+            'na dúvida, formas neutras ("quando você decidir", "quando quiser"). '
+            "Nunca aplique o seu gênero ao lead."
         )
         identity = f"Você é a {agent_name}, {role} de matrícula humanizada"
     else:
         role = "consultor"
         article_role = "o consultor"
         concord = (
-            "Concordância: fale SEMPRE no masculino "
+            "Concordância SOBRE VOCÊ: fale SEMPRE no masculino "
             '("obrigado", "fiquei feliz", "pronto", "animado", '
-            f'"{article_role}").'
+            f'"{article_role}"). '
+            "Concordância COM O LEAD: use o gênero que o nome e a fala dele indicam; "
+            'na dúvida, formas neutras ("quando você decidir", "quando quiser"). '
+            "Nunca aplique o seu gênero ao lead."
         )
         identity = f"Você é o {agent_name}, {role} de matrícula humanizado"
     return (

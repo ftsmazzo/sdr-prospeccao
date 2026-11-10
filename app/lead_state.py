@@ -41,6 +41,7 @@ STATE_WHITELIST = {
     "graduacao",
     "area_interesse",
     "objetivo",
+    "objetivo_recusado",
     "restricao",
     "decisor",
     "objecoes_levantadas",
@@ -190,6 +191,7 @@ def default_lead_state() -> dict[str, Any]:
         "graduacao": None,
         "area_interesse": None,
         "objetivo": None,
+        "objetivo_recusado": False,
         "restricao": None,
         "decisor": None,
         "objecoes_levantadas": [],
@@ -299,6 +301,7 @@ def merge_state_update(ls: dict[str, Any], update: dict[str, Any] | None) -> dic
             "lead_irritado",
             "pediu_desconto_ou_condicao",
             "duvida_juridica",
+            "objetivo_recusado",
         ):
             ls[key] = _as_bool(value)
             continue
@@ -485,6 +488,7 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
                 meta["desconto_respondido"] = True
             return meta["etapa"]
         # Atalho: lead decidido (graduação + curso do catálogo + aceite) → fechamento.
+        # objetivo NUNCA bloqueia matrícula.
         if (
             grad == "concluida"
             and ls.get("curso_escolhido")
@@ -497,7 +501,13 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
             if mark_desconto_respondido:
                 meta["desconto_respondido"] = True
             return "fechamento"
-        if grad == "concluida" and ls.get("area_interesse") and ls.get("objetivo"):
+        objetivo_ok = bool(ls.get("objetivo")) or bool(ls.get("objetivo_recusado"))
+        if grad == "concluida" and ls.get("area_interesse") and objetivo_ok:
+            meta["etapa"] = "recomendacao"
+            meta["objecoes_sem_avanco"] = 0
+            etapa = "recomendacao"
+        elif grad == "concluida" and ls.get("curso_escolhido") and objetivo_ok:
+            # Curso já escolhido + objetivo ok (ou recusado) → recomendacao sem área.
             meta["etapa"] = "recomendacao"
             meta["objecoes_sem_avanco"] = 0
             etapa = "recomendacao"
@@ -703,11 +713,52 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
         ]
 
     # Motivos de regeneração / action fora da etapa: responder inline, sem empurrar aceite.
+    if reason == "acao_fingida":
+        return [
+            (
+                "Assim que o documento chegar por aqui, eu te confirmo. "
+                "Enquanto isso, o que você quer esclarecer sobre o curso?"
+            ),
+            (
+                "Na nossa lista atual eu te oriento com o que temos; "
+                "um especialista pode confirmar se houver algo novo. "
+                "Qual dúvida posso tirar agora?"
+            ),
+            (
+                "Um especialista do polo vai dar sequência daqui. "
+                "Quando quiser, me chama que eu te ajudo no que estiver na minha mão."
+            ),
+        ]
+    if reason == "preco_fora_tabela":
+        return [
+            (
+                "A mensalidade segue a tabela do polo (faixa do curso). "
+                "À vista é o valor total com 10% — sem média mensal. "
+                "Quer que eu te diga a mensalidade e o à vista da sua faixa?"
+            ),
+            (
+                "Uso só os valores oficiais da tabela: mensalidade, total em 18x e à vista. "
+                "Quer o valor da faixa do seu curso?"
+            ),
+        ]
+    if reason == "matricula_sem_graduacao":
+        return [
+            (
+                "Antes de falar do passo a passo da matrícula, preciso saber: "
+                "sua graduação já está concluída?"
+            ),
+            (
+                "Pra eu te orientar certo na matrícula: você já concluiu a graduação?"
+            ),
+        ]
     if reason in (
         "promessa_sem_acao",
         "dados_antes_fechamento",
         "escassez",
         "quase_igual",
+        "acao_fingida",
+        "preco_fora_tabela",
+        "matricula_sem_graduacao",
     ) or "bloqueada etapa" in reason:
         curso_lbl = ls.get("curso_escolhido") or "o curso"
         return [

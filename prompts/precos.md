@@ -10,3 +10,5 @@ O valor depende da carga horária do curso (ver cursos.md):
 
 - Sem taxa de matrícula. A primeira mensalidade é paga na confirmação da matrícula.
 - O desconto à vista é a única condição de pagamento existente. Não há bolsas nem outros descontos.
+- **À vista = valor total** da coluna (ex. R$ 1.294,38). Nunca diga que à vista é “mensalidade” nem divida por 18 / invente média mensal.
+- Ao falar dos três números: “mensalidade R$ X”, “total em 18x R$ Y”, “à vista R$ Z”.

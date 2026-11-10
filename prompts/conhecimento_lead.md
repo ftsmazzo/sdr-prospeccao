@@ -48,6 +48,7 @@ Nomes, carga horária e duração de pós vêm **somente** do catálogo (`cursos
 | Dúvida | Resposta-base |
 |---|---|
 | EAD vale? | Sim: pós EAD FAVENI com mesma validade jurídica do presencial e reconhecimento MEC. |
+| Comprovação MEC / portaria? | Oriente a consultar o reconhecimento da instituição no site oficial do MEC (e-MEC) pelo nome da instituição. Não invente códigos, portarias nem diga que “não enviamos documentos digitais”. Se insistir em comprovação oficial, ofereça um especialista **uma vez**. |
 | Quanto tempo? | Depende do curso e da carga (catálogo): menos de 1000h a partir de 6 meses com dedicação; 1000h+ mín. 10 meses; Eng. Segurança do Trabalho 880h mín. 12 meses; máx. 18 meses. |
 | Como estuda? | 100% online no AVA: videoaulas, materiais, fóruns e avaliações no seu ritmo, sem horário fixo. |
 | Como me matriculo? | Nesta conversa. Docs: RG/CNH, CPF, certidão, diploma ou declaração, histórico, assinatura do contrato. |
