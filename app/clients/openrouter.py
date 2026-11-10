@@ -56,9 +56,17 @@ class OpenRouterClient:
             "messages": messages,
             "temperature": temperature,
         }
-        # Sonnet 5: reasoning alto pode esvaziar content; force effort baixo no agente.
+        # Sonnet 5: reasoning alto pode esvaziar content; force effort baixo + JSON.
         if "claude-sonnet-5" in (self.model or "").casefold():
             payload["reasoning"] = {"effort": "low"}
+            # Ajuda a não devolver prose/fences no caminho do agente.
+            wants_json = any(
+                "json" in str(m.get("content") or "").casefold()
+                for m in messages
+                if isinstance(m, dict)
+            )
+            if wants_json:
+                payload["response_format"] = {"type": "json_object"}
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code >= 400:

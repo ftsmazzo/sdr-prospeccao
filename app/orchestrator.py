@@ -334,13 +334,15 @@ class Orchestrator:
         if parsed:
             return parsed
 
-        logger.warning("JSON inválido — retry")
+        logger.warning("JSON inválido — retry bruto=%r", (raw or "")[:400])
         retry_messages = list(messages) + [
             {
                 "role": "system",
                 "content": (
                     "Sua resposta anterior não era JSON válido. "
-                    "Responda SOMENTE o objeto JSON do schema, sem markdown."
+                    "Responda SOMENTE o objeto JSON do schema "
+                    '(keys: reply, state_update, action, action_data, offer), '
+                    "sem markdown, sem texto fora do JSON."
                 ),
             }
         ]
