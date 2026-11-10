@@ -149,6 +149,20 @@ def reply_has_wrong_course_facts(reply: str) -> str | None:
     """Se a reply atribui carga/duração/preço errado a um curso do catálogo."""
     text = reply or ""
     low = text.casefold()
+    # Autismo (1000h / ~89,90) ≠ TEA (740h / ~79,90) — confusão comum.
+    autismo = course_facts("Autismo")
+    tea = course_facts("TEA – Transtorno do Espectro Autista") or course_facts("TEA")
+    if autismo and tea:
+        if re.search(r"(?i)\btea\b", text) and (
+            re.search(rf"(?i)\b{autismo.hours}\s*h", text)
+            or re.search(rf"R\$\s*{re.escape(autismo.monthly)}", text)
+        ):
+            return "TEA citada com fatos de Autismo"
+        if re.search(r"(?i)\bautismo\b", text) and (
+            re.search(rf"(?i)\b{tea.hours}\s*h", text)
+            or re.search(rf"R\$\s*{re.escape(tea.monthly)}", text)
+        ):
+            return "Autismo citado com fatos de TEA"
     for name, hours in _catalog_entries():
         # exige menção razoável ao nome (primeiro token longo ou 20 chars)
         tokens = [t for t in re.split(r"\s+", name) if len(t) >= 5]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from app.config import Settings
@@ -111,9 +112,32 @@ async def run_persona(
     prev_agent_asked_objetivo = False
     lead_refused_objetivo = False
     asked_objetivo_after_refuse_count = 0
+    turn_latencies_ms: list[float] = []
 
     # limpa memória residual do phone
     orch.memory.clear(phone)
+
+    # Persona já matriculada (pós-venda): seed de estado.
+    if persona.get("id") == "matriculado_pergunta_ava":
+        meta0 = orch.memory.get_meta(phone)
+        from app.lead_state import ensure_lead_state
+
+        ls0 = ensure_lead_state(meta0)
+        ls0["nome"] = persona.get("nome") or "Helena"
+        ls0["graduacao"] = "concluida"
+        ls0["curso_escolhido"] = "Psicopedagogia Institucional e Clínica"
+        ls0["aceite_matricula"] = True
+        meta0["lead_state"] = ls0
+        meta0["etapa"] = "matriculado"
+        meta0["matriculas"] = [
+            {
+                "curso": "Psicopedagogia Institucional e Clínica",
+                "aluno_nome": ls0["nome"],
+                "status": "confirmada",
+                "at": "2026-03-01T12:00:00+00:00",
+            }
+        ]
+        orch.memory.set_meta(phone, meta0)
 
     for turn in range(1, max_turns + 1):
         picado = _is_picado(str(persona.get("estilo") or "")) and turn > 1
@@ -145,16 +169,28 @@ async def run_persona(
         meta_before = orch.memory.get_meta(phone)
         etapa_antes = meta_before.get("etapa") or "abertura"
         handoff_avisado_before = bool(meta_before.get("handoff_avisado"))
+        pending_before = (
+            dict(meta_before["pending_offer"])
+            if isinstance(meta_before.get("pending_offer"), dict)
+            else None
+        )
+        recent_agent = [
+            str(h.get("text") or "")
+            for h in history
+            if h.get("role") == "agent"
+        ][-3:]
 
         if lead_refuses_question(lead_text) and prev_agent_asked_objetivo:
             lead_refused_objetivo = True
 
         orch.last_reply_diag = {}
+        t0 = time.perf_counter()
         reply = await orch.handle_inbound(
             phone,
             lead_text,
             push_name=str(persona.get("nome") or ""),
         )
+        turn_latencies_ms.append((time.perf_counter() - t0) * 1000.0)
         # prefer what was actually "sent"
         sent = evo.drain_texts()
         agent_text = sent or (reply or "")
@@ -206,6 +242,11 @@ async def run_persona(
         just_entered_handoff = (
             meta.get("etapa") == "handoff_humano" and etapa_antes != "handoff_humano"
         )
+        pending_after = (
+            dict(meta["pending_offer"])
+            if isinstance(meta.get("pending_offer"), dict)
+            else None
+        )
         turn_violations = judge_agent_reply(
             agent_text,
             turno=turn,
@@ -222,6 +263,10 @@ async def run_persona(
             prev_agent_asked_objetivo=prev_agent_asked_objetivo,
             lead_refused_objetivo=lead_refused_objetivo,
             asked_objetivo_after_refuse_count=asked_objetivo_after_refuse_count,
+            recent_agent_replies=recent_agent,
+            pending_offer_before=pending_before,
+            pending_offer_after=pending_after,
+            pending_offer_executed=bool(diag.get("pending_offer_executed")),
         )
         violations.extend(turn_violations)
 
@@ -271,6 +316,10 @@ async def run_persona(
             "regen_count": len(regens),
             "stock_count": len(stocks),
             "stock_repeat_count": len(stock_repeats),
+            "turn_latencies_ms": turn_latencies_ms,
+            "avg_latency_ms": (
+                sum(turn_latencies_ms) / len(turn_latencies_ms) if turn_latencies_ms else 0.0
+            ),
         },
         "judge": judge,
         "scheduler_log": list(sched.log),

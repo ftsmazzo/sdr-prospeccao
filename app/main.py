@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.8.0", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.9.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.8.0",
+        "version": "0.9.0",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
@@ -431,21 +431,52 @@ def checkout_page(token: str):
 
 
 @app.post("/checkout/{token}/confirm", response_class=HTMLResponse)
-def checkout_confirm(token: str):
+async def checkout_confirm(token: str):
     session = confirm_checkout(token)
     if not session:
         return HTMLResponse("<h1>Link inválido</h1>", status_code=404)
     try:
+        from datetime import datetime, timezone
+
+        from app.clients.evolution import EvolutionClient
         from app.lead_state import ensure_lead_state
         from app.memory import ConversationMemory
 
         settings = get_settings()
         mem = ConversationMemory(settings)
         meta = mem.get_meta(session.phone)
-        ensure_lead_state(meta)
+        ls = ensure_lead_state(meta)
         meta["etapa"] = "matriculado"
         meta["pending_contract"] = False
+        aluno = (ls.get("aluno_nome") or meta.get("full_name") or ls.get("nome") or "").strip()
+        matriculas = list(meta.get("matriculas") or [])
+        if not isinstance(matriculas, list):
+            matriculas = []
+        matriculas.append(
+            {
+                "curso": session.course_label,
+                "aluno_nome": aluno or None,
+                "status": "confirmada",
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        meta["matriculas"] = matriculas
         mem.set_meta(session.phone, meta)
+        welcome = (
+            f"Boa notícia — matrícula confirmada na pós em {session.course_label}"
+            + (f" ({aluno})" if aluno else "")
+            + "! O acesso à AVA chega em até 2 dias úteis por e-mail e WhatsApp. "
+            "Documentos complementares você pode mandar por aqui depois. "
+            "Tutoria/suporte das 8h às 21h45. Qualquer dúvida, me chama."
+        )
+        try:
+            evo = EvolutionClient(settings)
+            await evo.send_text(session.phone, welcome, delay_ms=0)
+            mem.append(session.phone, "assistant", welcome)
+        except Exception:
+            logger.exception(
+                "falha ao enviar boas-vindas WhatsApp phone=%s", session.phone
+            )
     except Exception:
         logger.exception("falha ao marcar matriculado phone=%s", getattr(session, "phone", ""))
     return HTMLResponse(

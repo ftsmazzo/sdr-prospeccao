@@ -46,11 +46,21 @@ from app.course_facts import (
     facts_for_lead_state,
     format_facts_block,
     reply_has_wrong_course_facts,
+    resolve_catalog_name,
 )
 from app.handoff_requests import (
     can_execute_register_handoff,
     handoff_registered_reply,
+    lead_accepts_specialist,
+    lead_refuses_handoff,
     register_handoff_request,
+)
+from app.offers import (
+    contract_data_request_reply,
+    detect_third_person_student,
+    lead_affirms_offer,
+    lead_refuses_offer,
+    normalize_offer,
 )
 from app.veracity import (
     apply_enrollment_intent,
@@ -58,6 +68,7 @@ from app.veracity import (
     lead_says_sending_document,
     mark_refused_fields,
     reply_has_disallowed_price,
+    reply_has_invented_policy,
     reply_has_markdown_list,
     reply_offers_enrollment,
 )
@@ -118,8 +129,14 @@ _REGEN_MOTIVOS = {
         "Responda de forma informativa, sem pressionar."
     ),
     "quase_igual": (
-        "Sua resposta ficou quase idêntica à anterior. Reescreva com outras palavras "
-        "e avance a conversa com uma pergunta ou próximo passo diferente."
+        "Sua resposta ficou quase idêntica a uma das últimas 3. Reescreva com outras "
+        "palavras e avance com uma pergunta ou próximo passo diferente. "
+        "Não repita o mesmo resumo."
+    ),
+    "politica_inventada": (
+        "Você inventou política fora da base (ex.: 'não enviamos contrato no WhatsApp', "
+        "'contrato vai por e-mail', prazo inventado). Reescreva: o PDF do contrato "
+        "é enviado por WhatsApp após os dados; use só fatos da base."
     ),
     "acao_fingida": (
         "Você afirmou uma ação que NÃO aconteceu no sistema "
@@ -334,11 +351,20 @@ class Orchestrator:
         return safe_fallback_response(raw2 or raw)
 
     def _last_assistant_text(self, phone: str) -> str:
+        recent = self._recent_assistant_texts(phone, n=1)
+        return recent[0] if recent else ""
+
+    def _recent_assistant_texts(self, phone: str, n: int = 3) -> list[str]:
         history = self.memory.get_history(phone)
+        out: list[str] = []
         for item in reversed(history):
             if item.get("role") == "assistant":
-                return str(item.get("content") or "")
-        return ""
+                content = str(item.get("content") or "").strip()
+                if content:
+                    out.append(content)
+                if len(out) >= n:
+                    break
+        return out
 
     def _reply_needs_regen(
         self,
@@ -351,6 +377,7 @@ class Orchestrator:
         has_media: bool = False,
         just_entered_handoff: bool = False,
         user_text: str = "",
+        recent_assistants: list[str] | None = None,
     ) -> str | None:
         if blocked_promise_reason:
             return blocked_promise_reason
@@ -371,6 +398,8 @@ class Orchestrator:
         )
         if fake:
             return "acao_fingida"
+        if reply_has_invented_policy(reply):
+            return "politica_inventada"
         if reply_has_disallowed_price(reply):
             return "preco_fora_tabela"
         if reply_has_wrong_course_facts(reply):
@@ -385,8 +414,12 @@ class Orchestrator:
             return "dados_antes_fechamento"
         if reply_has_scarcity(reply):
             return "escassez"
-        if last_assistant and replies_nearly_equal(reply, last_assistant):
-            return "quase_igual"
+        priors = recent_assistants if recent_assistants is not None else (
+            [last_assistant] if last_assistant else []
+        )
+        for prior in priors:
+            if prior and replies_nearly_equal(reply, prior):
+                return "quase_igual"
         return None
 
     def _regen_system_instruction(self, reason: str, meta: dict) -> str:
@@ -535,7 +568,10 @@ class Orchestrator:
                 logger.warning("LEAD_DATA incompleto/CPF inválido phone=%s", phone)
 
         elif action == "FOLLOWUP_DOC":
-            course = str(ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni").strip()
+            raw_course = str(
+                ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni"
+            ).strip()
+            course = resolve_catalog_name(raw_course) or raw_course
             full_name = str(data.get("full_name") or meta.get("full_name") or ls.get("nome") or "").strip()
             cpf = normalize_cpf(str(data.get("cpf") or meta.get("cpf") or ""))
             birth = str(data.get("birth_date") or meta.get("birth_date") or "").strip()
@@ -632,6 +668,101 @@ class Orchestrator:
         meta["_handoff_registered_this_turn"] = True
         return record
 
+    def _save_pending_offer(self, meta: dict, agent: AgentResponse) -> None:
+        offer = normalize_offer(agent.offer.model_dump() if agent.offer else None)
+        if offer:
+            offer["created_turn"] = int(meta.get("turn_count") or 0)
+            meta["pending_offer"] = offer
+            logger.info("pending_offer gravada type=%s", offer.get("type"))
+        # oferta só vive 1 turno de espera; se o modelo não ofereceu nada novo, não recria
+
+    def _execute_pending_contrato(
+        self, meta: dict, *, push_name: str = ""
+    ) -> tuple[str, str | None, bool]:
+        ls = ensure_lead_state(meta)
+        curso = ls.get("curso_escolhido") or ls.get("curso_recomendado") or ""
+        canon = resolve_catalog_name(str(curso)) if curso else None
+        if canon:
+            ls["curso_escolhido"] = canon
+        ls["aceite_matricula"] = True
+        meta["lead_state"] = ls
+        meta["etapa"] = "fechamento"
+        meta["objecoes_sem_avanco"] = 0
+        meta.pop("pending_offer", None)
+        reply = contract_data_request_reply(meta, ls)
+        # FOLLOWUP_DOC só com os 3 dados — aqui só pedimos o que falta.
+        return reply, canon or (str(curso) if curso else None), False
+
+    def _execute_pending_encaminhamento(
+        self,
+        phone: str,
+        meta: dict,
+        *,
+        push_name: str = "",
+        motivo: str = "especialista",
+    ) -> tuple[str, None, bool]:
+        ls = ensure_lead_state(meta)
+        why = motivo or meta.get("handoff_reason") or "especialista"
+        self._register_handoff_now(
+            phone=phone, meta=meta, motivo=why, push_name=push_name
+        )
+        if meta.get("etapa") != "handoff_humano":
+            if ls.get("e_aluno_atual") or meta.get("etapa") in (
+                "aluno_atual",
+                "matriculado",
+                "contrato_enviado",
+            ):
+                meta["etapa"] = (
+                    "aluno_atual"
+                    if ls.get("e_aluno_atual") or meta.get("etapa") == "aluno_atual"
+                    else meta.get("etapa") or "matriculado"
+                )
+                meta["handoff_reason"] = meta.get("handoff_reason") or why
+            else:
+                enter_handoff(meta, why if why != "especialista" else "especialista")
+        meta["handoff_avisado"] = True
+        meta.pop("pending_offer", None)
+        reply = handoff_registered_reply(
+            nome=ls.get("nome") or push_name or None,
+            motivo=why,
+        )
+        return reply, None, False
+
+    def _spoken_passes_gate(
+        self,
+        spoken: str,
+        *,
+        validated_reply: str,
+        recent_assistants: list[str],
+        meta: dict,
+    ) -> bool:
+        """Subset de validadores pós-TTS; se falhar, cai para texto."""
+        if claims_unbacked_action(
+            spoken,
+            has_media=False,
+            just_entered_handoff=False,
+            handoff_avisado=bool(meta.get("handoff_avisado")),
+            delivery_ran=False,
+            handoff_registered_this_turn=bool(meta.get("_handoff_registered_this_turn")),
+            handoff_registrado=bool(meta.get("handoff_registrado")),
+            lead_sending_document=False,
+        ):
+            return False
+        if reply_has_invented_policy(spoken):
+            return False
+        if reply_has_wrong_course_facts(spoken):
+            return False
+        if reply_looks_like_callback_promise(spoken) or reply_looks_like_delivery_promise(
+            spoken
+        ):
+            return False
+        for prior in recent_assistants:
+            if prior and replies_nearly_equal(spoken, prior):
+                return False
+        # spoken muito diferente da reply validada e com inventário errado já coberto
+        _ = validated_reply
+        return True
+
     async def _finalize_reply(
         self,
         *,
@@ -653,7 +784,8 @@ class Orchestrator:
             "stock_reason": None,
             "stock_text": None,
         }
-        last_assistant = self._last_assistant_text(phone)
+        recent_assistants = self._recent_assistant_texts(phone, n=3)
+        last_assistant = recent_assistants[0] if recent_assistants else ""
         reason = self._reply_needs_regen(
             reply,
             meta,
@@ -663,6 +795,7 @@ class Orchestrator:
             has_media=has_media,
             just_entered_handoff=just_entered_handoff,
             user_text=user_text,
+            recent_assistants=recent_assistants,
         )
         if reason:
             self.last_reply_diag["regen"] = True
@@ -692,6 +825,7 @@ class Orchestrator:
                     has_media=has_media,
                     just_entered_handoff=just_entered_handoff,
                     user_text=user_text,
+                    recent_assistants=recent_assistants,
                 )
 
             still = _still(candidate) if candidate else reason
@@ -817,100 +951,194 @@ class Orchestrator:
             pass
 
         last_assistant = self._last_assistant_text(phone)
+        recent_assistants = self._recent_assistant_texts(phone, n=3)
         mark_refused_fields(meta, lead_text=user_text, last_agent=last_assistant)
         ls = meta.get("lead_state") or ls
         meta["_phone"] = phone
         meta["_push_name"] = push_name
         meta.pop("_handoff_registered_this_turn", None)
+        meta["turn_count"] = int(meta.get("turn_count") or 0) + 1
+        if detect_third_person_student(user_text):
+            ls["aluno_e_terceiro"] = True
+            meta["lead_state"] = ls
 
         etapa_antes = meta.get("etapa") or "abertura"
-        system = build_system_prompt(
-            etapa=etapa_antes,
-            lead_state=ls,
-            meta_flags={
-                "pending_contract": meta.get("pending_contract"),
-                "contract_sent": meta.get("contract_sent"),
-                "desconto_respondido": meta.get("desconto_respondido"),
-                "handoff_reason": meta.get("handoff_reason"),
-                "handoff_avisado": meta.get("handoff_avisado"),
-                "handoff_registrado": meta.get("handoff_registrado"),
-                "campos_recusados": meta.get("campos_recusados") or [],
-            },
-            agent_name=self.settings.agent_name,
-            agent_gender=self.settings.agent_gender,
-        )
-        facts_block = format_facts_block(facts_for_lead_state(ls))
-        if facts_block:
-            system = f"{system}\n\n{facts_block}\n"
-        history = self.memory.get_history(phone)
-        messages: list[dict] = [{"role": "system", "content": system}]
-        if push_name and not history:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": f"O lead se apresenta no WhatsApp como: {push_name}. Use o primeiro nome com naturalidade.",
-                }
-            )
-        if inbound_audio:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": "O lead mandou ÁUDIO (já transcrito). Mantenha empatia e calor.",
-                }
-            )
+        pending = meta.get("pending_offer") if isinstance(meta.get("pending_offer"), dict) else None
+        force_skip_finalize = False
+        write_resumo_now = False
+        lead_irritado_turn = False
+        just_entered_handoff = False
+        reply = ""
+        course: str | None = None
+        blocked_promise_reason: str | None = None
+        delivery_ran = False
+        messages: list[dict] = []
         has_media = bool(has_image or has_document)
-        if has_media:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "O lead enviou imagem/documento NESTE turno. "
-                        "Só agora você pode confirmar o recebimento."
-                    ),
-                }
+        agent: AgentResponse | None = None
+
+        # 1) Executar pending_offer no código quando o lead afirma.
+        if pending:
+            otype = str(pending.get("type") or "")
+            refuses = lead_refuses_offer(user_text) or (
+                otype == "encaminhamento" and lead_refuses_handoff(user_text)
             )
-        messages.extend(history)
-        messages.append({"role": "user", "content": user_text})
+            affirms = lead_affirms_offer(user_text) or (
+                otype == "encaminhamento" and lead_accepts_specialist(user_text)
+            )
+            if refuses:
+                meta.pop("pending_offer", None)
+                pending = None
+            elif affirms:
+                if otype == "contrato":
+                    reply, course, delivery_ran = self._execute_pending_contrato(
+                        meta, push_name=push_name
+                    )
+                    force_skip_finalize = True
+                    logger.info("pending_offer executada type=contrato phone=%s", phone)
+                elif otype == "encaminhamento":
+                    reply, course, delivery_ran = self._execute_pending_encaminhamento(
+                        phone,
+                        meta,
+                        push_name=push_name,
+                        motivo=str(pending.get("motivo") or "especialista"),
+                    )
+                    just_entered_handoff = meta.get("etapa") == "handoff_humano"
+                    force_skip_finalize = True
+                    logger.info(
+                        "pending_offer executada type=encaminhamento phone=%s", phone
+                    )
+                elif otype == "resumo":
+                    meta.pop("pending_offer", None)
+                    write_resumo_now = True
+                else:
+                    meta.pop("pending_offer", None)
+                    pending = None
+            else:
+                # Sem afirmação → oferta expira (1 turno).
+                meta.pop("pending_offer", None)
+                pending = None
 
-        agent = await self._call_agent_json(messages)
+        if not force_skip_finalize:
+            system = build_system_prompt(
+                etapa=meta.get("etapa") or etapa_antes,
+                lead_state=ls,
+                meta_flags={
+                    "pending_contract": meta.get("pending_contract"),
+                    "contract_sent": meta.get("contract_sent"),
+                    "desconto_respondido": meta.get("desconto_respondido"),
+                    "handoff_reason": meta.get("handoff_reason"),
+                    "handoff_avisado": meta.get("handoff_avisado"),
+                    "handoff_registrado": meta.get("handoff_registrado"),
+                    "campos_recusados": meta.get("campos_recusados") or [],
+                },
+                agent_name=self.settings.agent_name,
+                agent_gender=self.settings.agent_gender,
+            )
+            facts_block = format_facts_block(facts_for_lead_state(ls))
+            if facts_block:
+                system = f"{system}\n\n{facts_block}\n"
+            history = self.memory.get_history(phone)
+            messages = [{"role": "system", "content": system}]
+            if push_name and not history:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            f"O lead se apresenta no WhatsApp como: {push_name}. "
+                            "Use o primeiro nome com naturalidade."
+                        ),
+                    }
+                )
+            if inbound_audio:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": "O lead mandou ÁUDIO (já transcrito). Mantenha empatia e calor.",
+                    }
+                )
+            if has_media:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "O lead enviou imagem/documento NESTE turno. "
+                            "Só agora você pode confirmar o recebimento."
+                        ),
+                    }
+                )
+            if write_resumo_now:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "O lead ACEITOU o resumo oferecido. Escreva o resumo COMPLETO "
+                            "NESTA mensagem (curso, carga, mensalidade da faixa, 100% online, "
+                            "troca em 90 dias, documentos). offer=null. action=null."
+                        ),
+                    }
+                )
+            messages.extend(history)
+            messages.append({"role": "user", "content": user_text})
 
-        # merge fatos (sem etapa); capturar flags de turno antes do advance zerar
-        lead_irritado_turn = bool(agent.state_update.get("lead_irritado"))
-        merge_state_update(ls, agent.state_update)
-        apply_enrollment_intent(ls, user_text)
-        meta["lead_state"] = ls
-        advance_etapa(meta, handoff_max_objecoes=self.settings.handoff_max_objecoes)
-        just_entered_handoff = (
-            meta.get("etapa") == "handoff_humano" and etapa_antes != "handoff_humano"
-        )
-        if meta.get("etapa") == "handoff_humano":
-            logger.info("handoff_humano phone=%s summary=%s", phone, summarize_lead(meta))
+            agent = await self._call_agent_json(messages)
 
-        # Registro Redis só via action REGISTER_HANDOFF (gates em _apply_actions).
-        reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
-            phone,
-            meta,
-            agent,
-            push_name,
-            user_text=user_text,
-            last_assistant=last_assistant,
-        )
-        if meta.get("_handoff_registered_this_turn"):
+            lead_irritado_turn = bool(agent.state_update.get("lead_irritado"))
+            merge_state_update(ls, agent.state_update)
+            if detect_third_person_student(user_text):
+                ls["aluno_e_terceiro"] = True
+            apply_enrollment_intent(ls, user_text)
+            # Canonicaliza curso se veio no update
+            if ls.get("curso_escolhido"):
+                canon = resolve_catalog_name(str(ls["curso_escolhido"]))
+                if canon:
+                    ls["curso_escolhido"] = canon
+            meta["lead_state"] = ls
+            advance_etapa(meta, handoff_max_objecoes=self.settings.handoff_max_objecoes)
             just_entered_handoff = (
-                just_entered_handoff or meta.get("etapa") == "handoff_humano"
+                meta.get("etapa") == "handoff_humano" and etapa_antes != "handoff_humano"
             )
-        reply = await self._finalize_reply(
-            phone=phone,
-            meta=meta,
-            messages=messages,
-            reply=reply,
-            course=course,
-            blocked_promise_reason=blocked_promise_reason,
-            delivery_ran=delivery_ran,
-            has_media=has_media,
-            just_entered_handoff=just_entered_handoff,
-            user_text=user_text,
-        )
+            if meta.get("etapa") == "handoff_humano":
+                logger.info(
+                    "handoff_humano phone=%s summary=%s", phone, summarize_lead(meta)
+                )
+
+            reply, course, blocked_promise_reason, delivery_ran = self._apply_actions(
+                phone,
+                meta,
+                agent,
+                push_name,
+                user_text=user_text,
+                last_assistant=last_assistant,
+            )
+            if meta.get("_handoff_registered_this_turn"):
+                just_entered_handoff = (
+                    just_entered_handoff or meta.get("etapa") == "handoff_humano"
+                )
+            # Grava offer para o próximo turno (após a reply que oferece).
+            self._save_pending_offer(meta, agent)
+
+            reply = await self._finalize_reply(
+                phone=phone,
+                meta=meta,
+                messages=messages,
+                reply=reply,
+                course=course,
+                blocked_promise_reason=blocked_promise_reason,
+                delivery_ran=delivery_ran,
+                has_media=has_media,
+                just_entered_handoff=just_entered_handoff,
+                user_text=user_text,
+            )
+        else:
+            self.last_reply_diag = {
+                "regen": False,
+                "regen_reason": None,
+                "stock": False,
+                "stock_reason": None,
+                "stock_text": None,
+                "pending_offer_executed": True,
+            }
+
         self.memory.set_meta(phone, meta)
 
         self.memory.append(phone, "user", user_text)
@@ -933,6 +1161,14 @@ class Orchestrator:
                     allow_expression_tags=allow_tags,
                     last_audio_opening=str(meta.get("last_audio_opening") or ""),
                 )
+                if not self._spoken_passes_gate(
+                    spoken,
+                    validated_reply=reply,
+                    recent_assistants=recent_assistants,
+                    meta=meta,
+                ):
+                    logger.warning("tts gate falhou — enviando texto validado")
+                    raise RuntimeError("spoken_gate_failed")
                 logger.info("tts spoken=%r allow_tags=%s", spoken[:160], allow_tags)
                 mp3 = await self.tts.synthesize(spoken)
                 audio, fmt = to_whatsapp_voice(mp3)

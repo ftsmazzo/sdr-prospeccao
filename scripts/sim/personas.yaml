@@ -3,21 +3,21 @@
   perfil: Enfermeira, 32 anos, graduada, trabalha em hospital
   objetivo: Pós em estética / Enfermagem em Estética
   objecao: vou_pensar por falta de tempo
-  estilo: mensagens curtas e naturais
+  estilo: mensagens curtas, informais, tipo WhatsApp (1 frase)
   fecha_quando: se mostrarem flexibilidade de ritmo e ela se sentir segura
   desiste_quando: se pressionarem demais ou inventarem desconto
   primeira_mensagem: Oi, quero algo na área da saúde, talvez estética
-
 - id: professora_psico_preco
   nome: Juliana
   perfil: Professora do ensino fundamental, graduada em pedagogia
   objetivo: Psicopedagogia Institucional e Clínica
   objecao: preço — quer mensalidade e valor à vista exatos da tabela
   estilo: formal, frases completas
-  fecha_quando: se informarem R$ 79,90/mês e à vista R$ 1.294,38 (faixa 620h) com clareza
-  desiste_quando: se inventarem desconto fora da tabela, recusarem o valor exato ou forem agressivas
+  fecha_quando: se informarem R$ 79,90/mês e à vista R$ 1.294,38 (faixa 620h) com
+    clareza
+  desiste_quando: se inventarem desconto fora da tabela, recusarem o valor exato ou
+    forem agressivas
   primeira_mensagem: Boa tarde. Tenho interesse em Psicopedagogia.
-
 - id: sem_graduacao_autismo
   nome: Lucas
   perfil: 24 anos, sem graduação, quer trabalhar com autismo
@@ -27,7 +27,6 @@
   fecha_quando: se encaminharem certo para graduação/capacitação
   desiste_quando: se insistirem em matricular em pós
   primeira_mensagem: Quero fazer pós em autismo
-
 - id: tecnico_enfermagem_cursando
   nome: Rafaela
   perfil: Técnica de enfermagem; acha que técnico conta como graduação / está cursando
@@ -37,18 +36,15 @@
   fecha_quando: se explicarem com empatia o que falta para a pós
   desiste_quando: se tratarem mal ou mentirem
   primeira_mensagem: oi
-  # segunda virá do LLM; seed só a primeira — estilo picado no restante
-
 - id: desconto_duas_vezes
   nome: Camila
   perfil: Graduada, decidida pelo TEA
   objetivo: TEA – Transtorno do Espectro Autista
   objecao: pede desconto duas vezes
-  estilo: direto
+  estilo: curto e informal — respostas de 1–5 palavras quando possível
   fecha_quando: se mantiverem o valor de referência com clareza
   desiste_quando: se inventarem bolsa
   primeira_mensagem: Quero a pós de TEA. Tem desconto?
-
 - id: desconfiado_ead
   nome: Roberto
   perfil: Graduado, desconfiado de EAD
@@ -58,17 +54,15 @@
   fecha_quando: se explicarem MEC / validade jurídica
   desiste_quando: se enrolarem ou inventarem selo
   primeira_mensagem: Estou interessado, mas EAD vale mesmo?
-
 - id: precisa_marido
   nome: Fernanda
   perfil: Graduada, quer educação especial
   objetivo: Educação Especial e Inclusiva
   objecao: conjuge — precisa falar com o marido
-  estilo: educado, médio
+  estilo: curto/informal; às vezes só 'sim', 'ok', 'depois falo com ele'
   fecha_quando: se derem resumo para encaminhar e combinarem retorno
   desiste_quando: se pressionarem para decidir na hora
   primeira_mensagem: Gostei da Educação Especial, mas preciso falar com meu marido
-
 - id: ja_tentou_desistiu
   nome: Paulo
   perfil: Graduado, já começou outra pós e abandonou
@@ -78,27 +72,25 @@
   fecha_quando: se falarem de ritmo flexível, tutoria e troca em 90 dias
   desiste_quando: se minimizarem o medo dele
   primeira_mensagem: ja tentei uma pos e desisti, sera q consigo mesmo?
-
 - id: aluno_atual_boleto
   nome: Carla
   perfil: Já é aluna Faveni, problema com boleto
   objetivo: resolver boleto (não é lead de pós nova)
   objecao: aluno_atual
-  estilo: irritado curto
+  estilo: irritado, curtíssimo, informal
   fecha_quando: se direcionarem ao atendimento ao aluno sem pitch
   desiste_quando: se tentarem vender outra matrícula
   primeira_mensagem: meu boleto nao aparece no portal, sou aluna
-
 - id: curso_fora_catalogo_uti
   nome: André
   perfil: Enfermeiro graduado
   objetivo: Pós em UTI (não está no catálogo)
   objecao: curso inexistente na lista
   estilo: curto
-  fecha_quando: se confirmarem que o curso exato precisa checar com o polo e oferecer área saúde
+  fecha_quando: se confirmarem que o curso exato precisa checar com o polo e oferecer
+    área saúde
   desiste_quando: se inventarem um curso de UTI
   primeira_mensagem: Vocês têm pós em UTI?
-
 - id: fechamento_rapido
   nome: Beatriz Souza
   perfil: Graduada, já pesquisou, quer Neuropsicopedagogia
@@ -107,14 +99,33 @@
   estilo: objetivo
   fecha_quando: assim que pedirem dados, manda nome CPF e nascimento
   desiste_quando: se enrolarem demais
-  primeira_mensagem: Quero Neuropsicopedagogia Institucional e Clínica, já decidi, como faço a matrícula?
-
+  primeira_mensagem: Quero Neuropsicopedagogia Institucional e Clínica, já decidi,
+    como faço a matrícula?
 - id: irritado_demora
   nome: Tiago
   perfil: Graduado, impaciente
   objetivo: IA para negócios
   objecao: lead_irritado / demora — quer o valor mensal exato (R$ 79,90) sem enrolação
-  estilo: mensagens picadas, tom seco
+  estilo: mensagens picadas, tom seco, informal
   fecha_quando: se disserem R$ 79,90 na mensalidade e forem objetivas no passo a passo
   desiste_quando: se alongarem, recusarem o valor exato ou enrolarem
   primeira_mensagem: oi
+- id: marido_compra_esposa
+  nome: Ricardo
+  perfil: Marido graduado comprando pós de Autismo para a esposa
+  objetivo: matricular a esposa em Autismo (1000h)
+  objecao: dúvida de carga horária Autismo vs TEA; respostas curtas
+  estilo: curto — 'sim', 'gostaria', 'e a carga?'
+  fecha_quando: se usarem o nome Autismo certo, esclarecerem 1000h e pedirem dados
+    dela
+  desiste_quando: se chamarem de TEA ou inventarem preço
+  primeira_mensagem: Oi, quero a pós de Autismo pra minha esposa
+- id: matriculado_pergunta_ava
+  nome: Helena
+  perfil: Recém-matriculada (demo) perguntando sobre AVA e documentos
+  objetivo: saber quando libera AVA e como enviar docs
+  objecao: pós-venda — respostas 'sim' curtas
+  estilo: curto, 'sim', 'e os documentos?'
+  fecha_quando: se explicarem AVA em até 2 dias úteis e docs por WhatsApp
+  desiste_quando: se inventarem prazo ou 'te aviso quando liberar'
+  primeira_mensagem: Oi, acabei de confirmar a matrícula. Quando libera a AVA?

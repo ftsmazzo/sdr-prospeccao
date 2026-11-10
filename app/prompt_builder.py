@@ -9,8 +9,10 @@ from typing import Any
 from app.knowledge import load_conhecimento_lead, load_cursos, load_precos, load_regras
 
 _ETAPAS_SEM_CATALOGO = frozenset({"aluno_atual", "nao_elegivel"})
+_ETAPAS_COM_POS_VENDA = frozenset({"contrato_enviado", "matriculado"})
 
 _ETAPAS_DIR = Path(__file__).resolve().parent.parent / "prompts" / "etapas"
+_POS_VENDA_PATH = Path(__file__).resolve().parent.parent / "prompts" / "pos_venda.md"
 
 JSON_SCHEMA_HINT = """
 ## Formato de saída (obrigatório)
@@ -32,13 +34,16 @@ Responda APENAS com um JSON válido (sem markdown, sem texto fora do JSON):
     "curso_alternativo": null,
     "aceite_matricula": false,
     "e_aluno_atual": false,
+    "aluno_e_terceiro": false,
+    "aluno_nome": null,
     "lead_irritado": false,
     "pediu_desconto_ou_condicao": false,
     "duvida_juridica": false,
     "proximo_passo": null
   },
   "action": null,
-  "action_data": {}
+  "action_data": {},
+  "offer": null
 }
 
 Regras do state_update:
@@ -51,34 +56,32 @@ Regras do state_update:
 - pediu_desconto_ou_condicao = true SOMENTE para condição específica (corporativo, parcelamento diferente, bolsa) — flag de TURNO
 - duvida_juridica / lead_irritado = true só neste turno se aplicável (não precisa reenviar false)
 - curso_recomendado = o que VOCÊ sugeriu
-- curso_escolhido = o curso que o LEAD declarou querer (mesmo sem aceite de matrícula).
+- curso_escolhido = nome EXATO do catálogo (ex. "Autismo" ≠ "TEA – Transtorno do Espectro Autista").
   Ex.: lead "Quero a pós em Enfermagem em Estética" → curso_escolhido="Enfermagem em Estética"
-  (aceite_matricula continua false até ele pedir para matricular)
-- aceite_matricula = true se o lead pediu matrícula / passo a passo / "quero me matricular" /
-  "como me matriculo" com curso já definido (curso_escolhido). Objetivo NÃO é requisito.
-- e_aluno_atual = true SOMENTE se o lead diz que já é aluno / problema em curso em andamento (boleto de matrícula nova NÃO conta)
+- aceite_matricula = true se pediu matrícula/passo a passo/contrato com curso definido. Objetivo NÃO é requisito.
+- aluno_e_terceiro = true se o lead compra para outra pessoa (esposa/filho/ela); aluno_nome se souber.
+- e_aluno_atual = true SOMENTE se já é aluno / problema em curso em andamento
 - NÃO envie campo "etapa" (o sistema decide)
-- NÃO prometa contrato, PDF ou link na reply se action for null
-- NÃO peça nome completo / CPF / data de nascimento fora da etapa fechamento
-- NÃO diga "garantir sua vaga" nem urgência/escassez inventada
-- NÃO afirme ter recebido documento/foto sem mídia neste turno; NÃO diga que confirmou/consultou o polo
-- NÃO diga "vou verificar/confirmar/acionar o especialista" nem "ainda não recebi retorno"
-- Só diga "registrei seu pedido" se você disparou action REGISTER_HANDOFF neste turno (o sistema valida)
-- Se handoff_registrado e o lead perguntar andamento: "seu pedido está registrado; o especialista te chama por aqui"
-- NÃO ofereça matrícula/passo a passo se graduacao ainda for null — pergunte a graduação antes
-- Se o lead pedir resumo/passos/condições: escreva o resumo NESTA mensagem (não "vou enviar depois")
-- Se campos_recusados incluir "objetivo", NÃO pergunte objetivo de novo; siga com o que já sabe
-- Use EXATAMENTE carga/duração/preço do bloco "Fatos dos cursos em discussão" quando houver
-- WhatsApp: texto corrido, sem listas com marcadores (-, *, 1.)
-- Nunca diga que o especialista envia o contrato — contrato só via FOLLOWUP_DOC
+- NÃO prometa contrato/PDF/link na reply se action for null
+- NÃO peça CPF fora da etapa fechamento
+- NÃO diga "garantir sua vaga" nem urgência inventada
+- NÃO afirme ação não executada; NÃO diga que confirmou/consultou o polo
+- NÃO diga que o contrato "não é enviado pelo WhatsApp" nem que "vai por e-mail" — o PDF sai por aqui
+- Só diga "registrei" se REGISTER_HANDOFF ou oferta pendente de encaminhamento foi executada
+- Com curso escolhido e lead afirmativo: peça os dados do contrato DIRETO (sem "posso pedir agora?")
+- Se o lead declara interesse que bate com curso do catálogo e já tem graduação: apresente o(s) curso(s) na mesma mensagem
+- Use EXATAMENTE carga/duração/preço dos "Fatos dos cursos"; Autismo (1000h) ≠ TEA (740h)
+- Concordância de gênero pelo nome/pronomes do lead; na dúvida: "quando você quiser"
+- WhatsApp: texto corrido, sem listas
 
-Actions (só quando permitido pelo fluxo):
-- LEAD_DATA: action_data { "full_name", "cpf", "birth_date" }
-- FOLLOWUP_DOC: action_data { "course", "full_name", "cpf", "birth_date" } — agenda contrato/PDF
-- CHECKOUT_READY: action_data { "course" } — só se não houver contrato pendente
-- REGISTER_HANDOFF: action_data { "motivo" } — só se na mensagem ANTERIOR você ofereceu especialista/encaminhamento
-  E o lead aceitou ESSA oferta (sem recusa tipo "não quero especialista/registro/intermediário").
-  Se já houver pedido registrado, NÃO dispare de novo.
+offer (quando a reply TERMINA oferecendo algo que o sistema executa no próximo "sim"):
+- {"type":"contrato"} — ofereceu enviar/gerar contrato
+- {"type":"encaminhamento","motivo":"..."} — ofereceu registrar especialista
+- {"type":"resumo"} — ofereceu mandar um resumo (escreva o resumo se o lead já pediu)
+- null na maioria dos turnos. Nunca ofereça o que o código não executa.
+
+Actions:
+- LEAD_DATA / FOLLOWUP_DOC / CHECKOUT_READY / REGISTER_HANDOFF como antes
 - Na maioria dos turnos: action = null
 """
 
@@ -93,6 +96,12 @@ def load_etapa_prompt(etapa: str) -> str:
     return f"Etapa atual: {etapa}. Conduza a conversa com empatia e uma pergunta por vez."
 
 
+def load_pos_venda() -> str:
+    if _POS_VENDA_PATH.is_file():
+        return _POS_VENDA_PATH.read_text(encoding="utf-8")
+    return ""
+
+
 def build_system_prompt(
     *,
     etapa: str,
@@ -104,6 +113,11 @@ def build_system_prompt(
     regras = load_regras()
     conhecimento = load_conhecimento_lead()
     etapa_txt = load_etapa_prompt(etapa)
+    pos_venda = ""
+    if etapa in _ETAPAS_COM_POS_VENDA:
+        pv = load_pos_venda()
+        if pv:
+            pos_venda = f"## Pós-venda (demonstração)\n{pv}\n\n"
     catalogo = ""
     if etapa not in _ETAPAS_SEM_CATALOGO:
         catalogo = (
@@ -157,6 +171,7 @@ def build_system_prompt(
         f"{regras}\n\n"
         f"## Prompt da etapa ({etapa})\n"
         f"{etapa_txt}\n\n"
+        f"{pos_venda}"
         "## Base de conhecimento (fatos para o lead)\n"
         f"{conhecimento}\n\n"
         f"{catalogo}"

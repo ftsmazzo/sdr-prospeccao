@@ -11,11 +11,14 @@ from app.lead_state import reply_looks_like_promise
 from app.pricing import allowed_money_amounts
 from app.speech import requests_personal_data
 from app.course_facts import reply_has_wrong_course_facts
+from app.offers import lead_affirms_offer
+from app.orchestrator import replies_nearly_equal
 from app.veracity import (
     claims_unbacked_action,
     lead_refuses_question,
     lead_says_sending_document,
     reply_asks_objetivo,
+    reply_has_invented_policy,
     reply_has_markdown_list,
 )
 
@@ -300,6 +303,10 @@ def judge_agent_reply(
     prev_agent_asked_objetivo: bool = False,
     lead_refused_objetivo: bool = False,
     asked_objetivo_after_refuse_count: int = 0,
+    recent_agent_replies: list[str] | None = None,
+    pending_offer_before: dict | None = None,
+    pending_offer_after: dict | None = None,
+    pending_offer_executed: bool = False,
 ) -> list[dict[str, Any]]:
     catalog = catalog or load_catalog()
     text = (reply or "").strip()
@@ -332,12 +339,32 @@ def judge_agent_reply(
     if fake:
         add("acao_fingida", f"{fake}: {text[:100]}")
 
+    if reply_has_invented_policy(text):
+        add("politica_inventada", text[:120])
+
     wrong = reply_has_wrong_course_facts(text)
     if wrong:
         add("fato_curso_errado", wrong)
 
     if reply_has_markdown_list(text):
         add("lista_markdown", text[:120])
+
+    for prior in (recent_agent_replies or [])[:3]:
+        if prior and replies_nearly_equal(text, prior):
+            add("quase_igual", text[:120])
+            break
+
+    # Lead afirmou oferta pendente e nada executou / resolveu neste turno.
+    if (
+        pending_offer_before
+        and lead_affirms_offer(lead_text)
+        and not pending_offer_executed
+        and not action_executed
+        and not handoff_registered_this_turn
+        and pending_offer_after is not None
+        and pending_offer_after == pending_offer_before
+    ):
+        add("sim_sem_execucao", f"offer={pending_offer_before.get('type')}")
 
     if lead_refused_objetivo and reply_asks_objetivo(text):
         # 2ª+ pergunta de objetivo após recusa

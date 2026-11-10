@@ -52,6 +52,8 @@ STATE_WHITELIST = {
     "curso_alternativo",
     "aceite_matricula",
     "e_aluno_atual",
+    "aluno_e_terceiro",
+    "aluno_nome",
     "lead_irritado",
     "pediu_desconto_ou_condicao",
     "duvida_juridica",
@@ -202,6 +204,8 @@ def default_lead_state() -> dict[str, Any]:
         "curso_alternativo": None,
         "aceite_matricula": False,
         "e_aluno_atual": False,
+        "aluno_e_terceiro": False,
+        "aluno_nome": None,
         "lead_irritado": False,
         "pediu_desconto_ou_condicao": False,
         "duvida_juridica": False,
@@ -298,6 +302,7 @@ def merge_state_update(ls: dict[str, Any], update: dict[str, Any] | None) -> dic
         if key in (
             "aceite_matricula",
             "e_aluno_atual",
+            "aluno_e_terceiro",
             "lead_irritado",
             "pediu_desconto_ou_condicao",
             "duvida_juridica",
@@ -308,6 +313,12 @@ def merge_state_update(ls: dict[str, Any], update: dict[str, Any] | None) -> dic
         if value is None:
             continue
         if isinstance(value, str) and not value.strip():
+            continue
+        if key == "curso_escolhido" and isinstance(value, str):
+            from app.course_facts import resolve_catalog_name
+
+            canon = resolve_catalog_name(value.strip())
+            ls[key] = canon or value.strip()
             continue
         ls[key] = value.strip() if isinstance(value, str) else value
     ls["_prev_objecao_ativa"] = prev_ativa
@@ -501,13 +512,19 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
             if mark_desconto_respondido:
                 meta["desconto_respondido"] = True
             return "fechamento"
-        objetivo_ok = bool(ls.get("objetivo")) or bool(ls.get("objetivo_recusado"))
-        if grad == "concluida" and ls.get("area_interesse") and objetivo_ok:
-            meta["etapa"] = "recomendacao"
-            meta["objecoes_sem_avanco"] = 0
-            etapa = "recomendacao"
-        elif grad == "concluida" and ls.get("curso_escolhido") and objetivo_ok:
-            # Curso já escolhido + objetivo ok (ou recusado) → recomendacao sem área.
+        # Objetivo NÃO é gate: graduação concluída + curso/área catalogável → recomendação.
+        tem_curso = bool(ls.get("curso_escolhido")) and _curso_no_catalogo(
+            str(ls.get("curso_escolhido") or "")
+        )
+        area_catalogavel = False
+        if not tem_curso and ls.get("area_interesse"):
+            from app.course_facts import resolve_catalog_name
+
+            area_catalogavel = bool(
+                resolve_catalog_name(str(ls.get("area_interesse") or ""))
+                or _curso_no_catalogo(str(ls.get("area_interesse") or ""))
+            )
+        if grad == "concluida" and (tem_curso or area_catalogavel or ls.get("area_interesse")):
             meta["etapa"] = "recomendacao"
             meta["objecoes_sem_avanco"] = 0
             etapa = "recomendacao"

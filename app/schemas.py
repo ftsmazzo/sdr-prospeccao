@@ -12,8 +12,14 @@ from pydantic import BaseModel, Field, ValidationError
 logger = logging.getLogger("edu.schemas")
 
 ActionType = Literal["LEAD_DATA", "FOLLOWUP_DOC", "CHECKOUT_READY", "REGISTER_HANDOFF"]
+OfferType = Literal["contrato", "encaminhamento", "resumo"]
 
 NEUTRAL_REPLY = "Só um instante, me confirma de novo o que você precisa?"
+
+
+class OfferPayload(BaseModel):
+    type: OfferType
+    motivo: str | None = None
 
 
 class AgentResponse(BaseModel):
@@ -21,6 +27,7 @@ class AgentResponse(BaseModel):
     state_update: dict[str, Any] = Field(default_factory=dict)
     action: ActionType | None = None
     action_data: dict[str, Any] = Field(default_factory=dict)
+    offer: OfferPayload | None = None
 
 
 def _strip_fences(raw: str) -> str:

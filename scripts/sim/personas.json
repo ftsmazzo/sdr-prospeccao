@@ -5,7 +5,7 @@
     "perfil": "Enfermeira, 32 anos, graduada, trabalha em hospital",
     "objetivo": "Pós em estética / Enfermagem em Estética",
     "objecao": "vou_pensar por falta de tempo",
-    "estilo": "mensagens curtas e naturais",
+    "estilo": "mensagens curtas, informais, tipo WhatsApp (1 frase)",
     "fecha_quando": "se mostrarem flexibilidade de ritmo e ela se sentir segura",
     "desiste_quando": "se pressionarem demais ou inventarem desconto",
     "primeira_mensagem": "Oi, quero algo na área da saúde, talvez estética"
@@ -49,7 +49,7 @@
     "perfil": "Graduada, decidida pelo TEA",
     "objetivo": "TEA – Transtorno do Espectro Autista",
     "objecao": "pede desconto duas vezes",
-    "estilo": "direto",
+    "estilo": "curto e informal — respostas de 1–5 palavras quando possível",
     "fecha_quando": "se mantiverem o valor de referência com clareza",
     "desiste_quando": "se inventarem bolsa",
     "primeira_mensagem": "Quero a pós de TEA. Tem desconto?"
@@ -71,7 +71,7 @@
     "perfil": "Graduada, quer educação especial",
     "objetivo": "Educação Especial e Inclusiva",
     "objecao": "conjuge — precisa falar com o marido",
-    "estilo": "educado, médio",
+    "estilo": "curto/informal; às vezes só 'sim', 'ok', 'depois falo com ele'",
     "fecha_quando": "se derem resumo para encaminhar e combinarem retorno",
     "desiste_quando": "se pressionarem para decidir na hora",
     "primeira_mensagem": "Gostei da Educação Especial, mas preciso falar com meu marido"
@@ -93,7 +93,7 @@
     "perfil": "Já é aluna Faveni, problema com boleto",
     "objetivo": "resolver boleto (não é lead de pós nova)",
     "objecao": "aluno_atual",
-    "estilo": "irritado curto",
+    "estilo": "irritado, curtíssimo, informal",
     "fecha_quando": "se direcionarem ao atendimento ao aluno sem pitch",
     "desiste_quando": "se tentarem vender outra matrícula",
     "primeira_mensagem": "meu boleto nao aparece no portal, sou aluna"
@@ -126,9 +126,31 @@
     "perfil": "Graduado, impaciente",
     "objetivo": "IA para negócios",
     "objecao": "lead_irritado / demora — quer o valor mensal exato (R$ 79,90) sem enrolação",
-    "estilo": "mensagens picadas, tom seco",
+    "estilo": "mensagens picadas, tom seco, informal",
     "fecha_quando": "se disserem R$ 79,90 na mensalidade e forem objetivas no passo a passo",
     "desiste_quando": "se alongarem, recusarem o valor exato ou enrolarem",
     "primeira_mensagem": "oi"
+  },
+  {
+    "id": "marido_compra_esposa",
+    "nome": "Ricardo",
+    "perfil": "Marido graduado comprando pós de Autismo para a esposa",
+    "objetivo": "matricular a esposa em Autismo (1000h)",
+    "objecao": "dúvida de carga horária Autismo vs TEA; respostas curtas",
+    "estilo": "curto — 'sim', 'gostaria', 'e a carga?'",
+    "fecha_quando": "se usarem o nome Autismo certo, esclarecerem 1000h e pedirem dados dela",
+    "desiste_quando": "se chamarem de TEA ou inventarem preço",
+    "primeira_mensagem": "Oi, quero a pós de Autismo pra minha esposa"
+  },
+  {
+    "id": "matriculado_pergunta_ava",
+    "nome": "Helena",
+    "perfil": "Recém-matriculada (demo) perguntando sobre AVA e documentos",
+    "objetivo": "saber quando libera AVA e como enviar docs",
+    "objecao": "pós-venda — respostas 'sim' curtas",
+    "estilo": "curto, 'sim', 'e os documentos?'",
+    "fecha_quando": "se explicarem AVA em até 2 dias úteis e docs por WhatsApp",
+    "desiste_quando": "se inventarem prazo ou 'te aviso quando liberar'",
+    "primeira_mensagem": "Oi, acabei de confirmar a matrícula. Quando libera a AVA?"
   }
 ]

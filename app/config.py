@@ -17,7 +17,8 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "openai/gpt-4.1-mini"
+    # Padrão demo-v2. Alternativa mais barata: openai/gpt-4.1-mini (só trocar OPENROUTER_MODEL).
+    openrouter_model: str = "anthropic/claude-sonnet-5"
     stt_model: str = "openai/whisper-1"
 
     evolution_base_url: str = ""

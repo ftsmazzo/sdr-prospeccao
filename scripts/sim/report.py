@@ -63,6 +63,9 @@ def write_reports(
     _PRICE = {
         "openai/gpt-4.1-mini": {"in": 0.40, "out": 1.60},
         "openai/gpt-4.1": {"in": 2.00, "out": 8.00},
+        "anthropic/claude-sonnet-5": {"in": 3.00, "out": 15.00},
+        "anthropic/claude-sonnet-4": {"in": 3.00, "out": 15.00},
+        "anthropic/claude-3.5-sonnet": {"in": 3.00, "out": 15.00},
     }
     agent_m = str(models.get("agent") or "")
     lead_m = str(models.get("lead") or "")
@@ -129,6 +132,16 @@ def write_reports(
             f"- **custo estimado / conversa**: US$ {avg_cost:.4f} "
             f"(agente `{agent_m}`)"
         )
+        latencies = [
+            float((r.get("diagnostics") or {}).get("avg_latency_ms") or 0)
+            for r in results
+            if (r.get("diagnostics") or {}).get("avg_latency_ms")
+        ]
+        if latencies:
+            lines.append(
+                f"- **latência média / turno (agente)**: "
+                f"{sum(latencies) / len(latencies):.0f} ms"
+            )
     lines.append("")
 
     lines.append("## Justificativas de veracidade")

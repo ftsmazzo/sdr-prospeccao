@@ -228,6 +228,23 @@ def reply_has_markdown_list(text: str) -> bool:
     )
 
 
+_INVENTED_POLICY_RE = re.compile(
+    r"(?i)\b("
+    r"n[aã]o\s+(?:enviamos|mandamos|enviamos)\s+(?:o\s+)?(?:contrato|documento|pdf)"
+    r"(?:\s+(?:pelo|no|via))?\s*whatsapp"
+    r"|contrato\s+(?:vai|segue|ser[aá]\s+enviado)\s+por\s+e-?\s*mail"
+    r"|documento\s+(?:vai|segue)\s+por\s+e-?\s*mail"
+    r"|n[aã]o\s+(?:conseguimos|podemos)\s+enviar\s+(?:contrato|pdf)\s+"
+    r"(?:pelo|no)\s+whatsapp"
+    r"|te\s+aviso\s+quando\s+(?:liberar|o\s+acesso|a\s+ava)"
+    r")\b"
+)
+
+
+def reply_has_invented_policy(text: str) -> bool:
+    return bool(_INVENTED_POLICY_RE.search(text or ""))
+
+
 def lead_sends_cpf(text: str) -> bool:
     m = _LEAD_CPF_IN_TEXT_RE.search(text or "")
     if not m:
