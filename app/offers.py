@@ -20,7 +20,7 @@ _AFFIRM_RE = re.compile(
 _REFUSE_OFFER_RE = re.compile(
     r"(?i)\b("
     r"n[aã]o\s+quero\s+(?:contrato|especialista|registro|agora|mais)"
-    r"|n[aã]o\s+(?:precisa|agora|quero)"
+    r"|n[aã]o\s+(?:precisa|agora)"
     r"|depois\b|deixa\s+pra\s+l[aá]|sem\s+intermedi[aá]rio"
     r"|n[aã]o\s+envie|n[aã]o\s+manda"
     r")\b"
@@ -36,6 +36,27 @@ _THIRD_PERSON_RE = re.compile(
     r")\b"
 )
 
+_RELACAO_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"(?i)\bminha\s+esposa\b|\besposa\b"), "esposa", "f"),
+    (re.compile(r"(?i)\bmeu\s+marido\b|\bmarido\b"), "marido", "m"),
+    (re.compile(r"(?i)\bminha\s+filha\b"), "filha", "f"),
+    (re.compile(r"(?i)\bmeu\s+filho\b"), "filho", "m"),
+    (re.compile(r"(?i)\bpra\s+ela\b|\bpara\s+ela\b|\bela\b"), "ela", "f"),
+    (re.compile(r"(?i)\bpra\s+ele\b|\bpara\s+ele\b"), "ele", "m"),
+)
+
+_NEW_PURCHASE_RE = re.compile(
+    r"(?i)\b("
+    r"outra\s+p[oó]s|outro\s+curso|mais\s+uma\s+matr[ií]cula"
+    r"|quero\s+(?:fazer|matricular|uma\s+p[oó]s)"
+    r"|sim\s+quero|quero\s+sim"
+    r"|para\s+(?:minha|meu)\s+(?:esposa|marido|filha|filho)"
+    r"|pra\s+(?:minha|meu)\s+(?:esposa|marido|filha|filho)"
+    r"|interessad[oa]\s+em\s+(?:outra|outro)"
+    r"|curso\s+para\s+(?:minha|meu|ela|ele)"
+    r")\b"
+)
+
 
 def lead_affirms_offer(text: str) -> bool:
     if lead_refuses_offer(text):
@@ -44,11 +65,40 @@ def lead_affirms_offer(text: str) -> bool:
 
 
 def lead_refuses_offer(text: str) -> bool:
-    return bool(_REFUSE_OFFER_RE.search(text or ""))
+    # "não quero" sozinho / recusa de oferta — não confundir com "Sim quero"
+    t = text or ""
+    if re.search(r"(?i)\bsim\b.*\bquero\b|\bquero\s+sim\b", t):
+        return False
+    return bool(_REFUSE_OFFER_RE.search(t))
 
 
 def detect_third_person_student(text: str) -> bool:
     return bool(_THIRD_PERSON_RE.search(text or ""))
+
+
+def detect_aluno_relacao(text: str) -> tuple[str | None, str | None]:
+    """Retorna (relacao, genero 'f'|'m')."""
+    for rx, rel, gen in _RELACAO_PATTERNS:
+        if rx.search(text or ""):
+            return rel, gen
+    return None, None
+
+
+def apply_third_person_flags(ls: dict[str, Any], text: str) -> None:
+    if not detect_third_person_student(text):
+        return
+    ls["aluno_e_terceiro"] = True
+    rel, gen = detect_aluno_relacao(text)
+    if rel:
+        ls["aluno_relacao"] = rel
+    if gen:
+        ls["aluno_genero"] = gen
+
+
+def lead_wants_new_purchase(text: str) -> bool:
+    return bool(_NEW_PURCHASE_RE.search(text or "")) or detect_third_person_student(
+        text or ""
+    )
 
 
 def normalize_offer(raw: Any) -> dict[str, Any] | None:
@@ -91,8 +141,6 @@ _OFFER_RESUMO_RE = re.compile(
     r"|quer\s+(?:um\s+)?resumo"
     r")\b"
 )
-
-
 def infer_offer_from_reply(reply: str) -> dict[str, Any] | None:
     """Se a reply oferece algo executável e o modelo omitiu offer."""
     text = reply or ""
@@ -121,15 +169,12 @@ def lead_asks_if_registered(text: str) -> bool:
 
 
 def contract_data_request_reply(meta: dict[str, Any], ls: dict[str, Any]) -> str:
-    """Pede só o que falta para gerar o contrato."""
+    """Pede só o que falta para gerar o contrato (gênero resolvido)."""
     third = bool(ls.get("aluno_e_terceiro"))
     aluno = (ls.get("aluno_nome") or "").strip()
-    if aluno:
-        whose = f"de {aluno}"
-    elif third:
-        whose = "dela/dele (da pessoa que vai estudar)"
-    else:
-        whose = "seu"
+    rel = (ls.get("aluno_relacao") or "").strip().casefold()
+    gen = (ls.get("aluno_genero") or "").strip().casefold()
+
     missing = missing_contract_fields(meta, ls) or [
         "nome completo",
         "CPF",
@@ -141,15 +186,57 @@ def contract_data_request_reply(meta: dict[str, Any], ls: dict[str, Any]) -> str
         need = f"{missing[0]} e {missing[1]}"
     else:
         need = f"{missing[0]}, {missing[1]} e {missing[2]}"
+
+    if not third and not aluno:
+        return (
+            f"Perfeito! Pra eu gerar o contrato, me passa o {need} seu. "
+            "Você lê o contrato com calma antes de confirmar qualquer pagamento."
+        )
+
+    # Terceiro / nome do aluno
+    if aluno:
+        whose_pronoun = "dela" if gen == "f" else ("dele" if gen == "m" else "")
+        if whose_pronoun:
+            return (
+                f"Perfeito! Pra eu gerar o contrato de {aluno}, me passa o {need} "
+                f"{whose_pronoun}. Você lê o contrato com calma antes de confirmar "
+                "qualquer pagamento."
+            )
+        return (
+            f"Perfeito! Pra eu gerar o contrato de {aluno}, me passa o {need} "
+            "da pessoa que vai estudar. Você lê o contrato com calma antes de "
+            "confirmar qualquer pagamento."
+        )
+
+    if rel in ("esposa", "filha") or gen == "f":
+        label = "da sua esposa" if rel == "esposa" else (
+            "da sua filha" if rel == "filha" else "dela"
+        )
+        return (
+            f"Perfeito! Pra eu gerar o contrato {label}, me passa o {need} dela. "
+            "Você lê o contrato com calma antes de confirmar qualquer pagamento."
+        )
+    if rel in ("marido", "filho") or gen == "m":
+        label = "do seu marido" if rel == "marido" else (
+            "do seu filho" if rel == "filho" else "dele"
+        )
+        return (
+            f"Perfeito! Pra eu gerar o contrato {label}, me passa o {need} dele. "
+            "Você lê o contrato com calma antes de confirmar qualquer pagamento."
+        )
     return (
-        f"Perfeito! Pra eu gerar o contrato, me passa o {need} {whose}. "
-        "Você lê o contrato com calma antes de confirmar qualquer pagamento."
+        f"Perfeito! Pra eu gerar o contrato da pessoa que vai estudar, me passa "
+        f"o {need}. Você lê o contrato com calma antes de confirmar qualquer pagamento."
     )
 
 
 def missing_contract_fields(meta: dict[str, Any], ls: dict[str, Any]) -> list[str]:
     missing: list[str] = []
-    if not (meta.get("full_name") or ls.get("nome")):
+    # Para terceiro, nome do aluno pode estar em aluno_nome; full_name/meta.nome é comprador
+    if ls.get("aluno_e_terceiro"):
+        if not (ls.get("aluno_nome") or meta.get("full_name")):
+            missing.append("nome completo")
+    elif not (meta.get("full_name") or ls.get("nome")):
         missing.append("nome completo")
     if not meta.get("cpf"):
         missing.append("CPF")

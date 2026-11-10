@@ -16,9 +16,11 @@ from app.config import Settings
 from app.followups import get_scheduler
 from app.lead_state import (
     advance_etapa,
+    begin_new_purchase,
     can_run_action,
     ensure_lead_state,
     enter_handoff,
+    lead_says_farewell_or_space,
     merge_state_update,
     reply_looks_like_callback_promise,
     reply_looks_like_delivery_promise,
@@ -61,12 +63,14 @@ from app.handoff_requests import (
     register_handoff_request,
 )
 from app.offers import (
+    apply_third_person_flags,
     contract_data_request_reply,
     detect_third_person_student,
     infer_offer_from_reply,
     lead_affirms_offer,
     lead_asks_if_registered,
     lead_refuses_offer,
+    lead_wants_new_purchase,
     normalize_offer,
 )
 from app.veracity import (
@@ -129,7 +133,14 @@ _REGEN_MOTIVOS = {
     ),
     "dados_antes_fechamento": (
         "Você NÃO pode pedir nome completo, CPF ou data de nascimento agora — "
-        "isso só na etapa fechamento. Responda ao pedido do lead sem coletar dados pessoais."
+        "isso só na etapa fechamento. Responda DIRETO à última mensagem do lead "
+        "(interesse, curso, dúvida) com uma pergunta neutra ligada ao que ele disse. "
+        "NUNCA use despedida ('Quando quiser retomar…') neste caso."
+    ),
+    "promessa_lembrete_nao_despedida": (
+        "O lead NÃO se despediu. Responda DIRETO à última mensagem dele com "
+        "uma pergunta neutra ligada ao que ele pediu. "
+        "NUNCA diga 'Quando quiser retomar, é só me chamar aqui'."
     ),
     "escassez": (
         "Não use urgência ou escassez inventada (ex.: garantir vaga, últimas vagas). "
@@ -471,7 +482,9 @@ class Orchestrator:
             return ""
         return reply
 
-    def _apply_stock_fallback(self, meta: dict, reason: str, reply: str) -> str:
+    def _apply_stock_fallback(
+        self, meta: dict, reason: str, reply: str, *, user_text: str = ""
+    ) -> str:
         ls = meta.get("lead_state") or {}
         stock_reason = reason
         # Lembrete/retorno: stock dedicado (nunca sem_curso/sem_aceite).
@@ -482,7 +495,17 @@ class Orchestrator:
         # promessa_sem_acao pura: stock informativo (não forçar aceite).
         # Motivos "FOLLOWUP_DOC sem_aceite" / "sem_curso" já vêm no reason e seguem.
         avoid = str(meta.get("last_stock_reply") or "")
-        stock = rewrite_blocked_action_reply(stock_reason, reply, ls, avoid=avoid)
+        stock = rewrite_blocked_action_reply(
+            stock_reason, reply, ls, avoid=avoid, user_text=user_text
+        )
+        # Nunca enviar despedida se o lead não se despediu.
+        if (
+            not lead_says_farewell_or_space(user_text)
+            and "quando quiser retomar" in stock.casefold()
+        ):
+            stock = (
+                "Me conta o que você precisa saber agora que eu te respondo por aqui?"
+            )
         meta["last_stock_reply"] = stock
         streak = int(meta.get("stock_streak") or 0) + 1
         meta["stock_streak"] = streak
@@ -885,7 +908,9 @@ class Orchestrator:
             stock_from = second or candidate or reply
             stock_reason = still2 or still or reason
             logger.info("regen falhou 2x — stock reason=%s", stock_reason)
-            stock = self._apply_stock_fallback(meta, stock_reason, stock_from)
+            stock = self._apply_stock_fallback(
+                meta, stock_reason, stock_from, user_text=user_text
+            )
             self.last_reply_diag["stock"] = True
             self.last_reply_diag["stock_reason"] = (
                 "loop_stock" if meta.get("handoff_reason") == "loop_stock" else stock_reason
@@ -977,9 +1002,13 @@ class Orchestrator:
         meta["_push_name"] = push_name
         meta.pop("_handoff_registered_this_turn", None)
         meta["turn_count"] = int(meta.get("turn_count") or 0) + 1
-        if detect_third_person_student(user_text):
-            ls["aluno_e_terceiro"] = True
-            meta["lead_state"] = ls
+        apply_third_person_flags(ls, user_text)
+        if meta.get("etapa") == "matriculado" and (
+            lead_wants_new_purchase(user_text) or ls.get("aluno_e_terceiro")
+        ):
+            begin_new_purchase(meta, ls)
+            logger.info("reabre funil a partir de matriculado phone=%s", phone)
+        meta["lead_state"] = ls
 
         etapa_antes = meta.get("etapa") or "abertura"
         pending = meta.get("pending_offer") if isinstance(meta.get("pending_offer"), dict) else None
@@ -1128,9 +1157,13 @@ class Orchestrator:
 
             lead_irritado_turn = bool(agent.state_update.get("lead_irritado"))
             merge_state_update(ls, agent.state_update)
-            if detect_third_person_student(user_text):
-                ls["aluno_e_terceiro"] = True
+            apply_third_person_flags(ls, user_text)
             apply_enrollment_intent(ls, user_text)
+            # Só reabre se ainda estiver em matriculado (evita apagar state_update).
+            if meta.get("etapa") == "matriculado" and (
+                lead_wants_new_purchase(user_text) or ls.get("aluno_e_terceiro")
+            ):
+                begin_new_purchase(meta, ls)
             # Canonicaliza curso se veio no update
             if ls.get("curso_escolhido"):
                 canon = resolve_catalog_name(str(ls["curso_escolhido"]))
@@ -1138,6 +1171,7 @@ class Orchestrator:
                     ls["curso_escolhido"] = canon
             meta["lead_state"] = ls
             advance_etapa(meta, handoff_max_objecoes=self.settings.handoff_max_objecoes)
+            meta.pop("_reopen_purchase", None)
             just_entered_handoff = (
                 meta.get("etapa") == "handoff_humano" and etapa_antes != "handoff_humano"
             )

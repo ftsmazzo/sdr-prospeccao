@@ -152,12 +152,16 @@ def test_action_bloqueada_e_promessa_sem_acao():
     assert "http" not in rewritten.lower()
     assert "confirma qual curso" in rewritten.lower()
 
-    # promessa sem action → stock informativo (não força aceite)
+    # promessa sem action → stock informativo (não força aceite / sem despedida)
     r2 = rewrite_blocked_action_reply("promessa_sem_acao", promised, meta["lead_state"])
     low2 = r2.lower()
     assert "confirma que quer matricular" not in low2
     assert "http" not in low2
-    assert any(x in low2 for x in ("esclarecer", "quer saber", "respondo aqui", "me chamar"))
+    assert "quando quiser retomar" not in low2
+    assert any(
+        x in low2
+        for x in ("esclarecer", "quer saber", "respondo por aqui", "precisa saber", "me chamar")
+    )
 
 
 def test_promessa_somente_entrega_nao_mencao():
@@ -188,10 +192,18 @@ def test_promessa_somente_entrega_nao_mencao():
 
     assert reply_looks_like_callback_promise("Vou te chamar daqui a alguns dias")
     assert not reply_looks_like_callback_promise("Quer seguir com a matrícula?")
+    # Despedida só com user_text de despedida/espaço
     assert "me chamar aqui" in rewrite_blocked_action_reply(
         "promessa_lembrete",
         "Vou te chamar depois",
         {"curso_escolhido": "Enfermagem em Estética", "aceite_matricula": False},
+        user_text="Vou pensar e te falo depois",
+    ).lower()
+    assert "quando quiser retomar" not in rewrite_blocked_action_reply(
+        "promessa_lembrete",
+        "Vou te chamar depois",
+        {"curso_escolhido": "Enfermagem em Estética", "aceite_matricula": False},
+        user_text="Sim quero",
     ).lower()
 
 

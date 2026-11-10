@@ -145,3 +145,11 @@ def normalize_cpf(value: str) -> str | None:
     if len(digits) == 11:
         return digits
     return None
+
+
+def format_cpf(value: str) -> str:
+    """Formata 11 dígitos como 123.456.789-00; senão devolve o original."""
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) != 11:
+        return (value or "").strip()
+    return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"

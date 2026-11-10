@@ -45,7 +45,8 @@ def test_contract_third_person_copy():
     ls = {"aluno_e_terceiro": True, "aluno_nome": None}
     meta: dict = {}
     text = contract_data_request_reply(meta, ls)
-    assert "dela/dele" in text
+    assert "dela/dele" not in text
+    assert "pessoa que vai estudar" in text
     assert "nome completo" in text
 
 

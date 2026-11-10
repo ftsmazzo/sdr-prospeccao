@@ -36,6 +36,8 @@ Sempre chame a ferramenta `responder` com:
     "e_aluno_atual": false,
     "aluno_e_terceiro": false,
     "aluno_nome": null,
+    "aluno_relacao": null,
+    "aluno_genero": null,
     "lead_irritado": false,
     "pediu_desconto_ou_condicao": false,
     "duvida_juridica": false,
@@ -55,7 +57,8 @@ Regras do state_update:
 - pediu_desconto_ou_condicao = true SOMENTE para condição específica (corporativo, parcelamento diferente, bolsa)
 - curso_escolhido = nome EXATO do catálogo (Autismo ≠ TEA – Transtorno do Espectro Autista)
 - aceite_matricula = true se pediu matrícula/passo a passo/contrato com curso definido. Objetivo NÃO é requisito.
-- aluno_e_terceiro = true se compra para outra pessoa; aluno_nome se souber
+- aluno_e_terceiro = true se compra para outra pessoa; aluno_nome / aluno_relacao (esposa, marido…) / aluno_genero ("f"|"m") se souber
+- Graduação e interesse são do ALUNO (terceiro): profissão ≠ área de interesse; confirme graduação do aluno antes de matrícula
 - NÃO envie campo "etapa" (o sistema decide)
 - NÃO prometa contrato/PDF/link na reply se action for null
 - NÃO diga que o contrato "não é enviado pelo WhatsApp" nem que "vai por e-mail"

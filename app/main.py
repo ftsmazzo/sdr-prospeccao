@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.9.1", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.9.2", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.9.1",
+        "version": "0.9.2",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
@@ -484,7 +484,7 @@ async def checkout_confirm(token: str):
         welcome = (
             f"Boa notícia — matrícula confirmada na pós em {session.course_label}"
             + (f" ({aluno})" if aluno else "")
-            + "! O acesso à AVA chega em até 2 dias úteis por e-mail e WhatsApp. "
+            + "! O acesso ao AVA chega em até 2 dias úteis por e-mail e WhatsApp. "
             "Documentos complementares você pode mandar por aqui depois. "
             "Tutoria/suporte das 8h às 21h45. Qualquer dúvida, me chama."
         )

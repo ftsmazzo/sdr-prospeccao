@@ -189,6 +189,9 @@ def phonetize_for_tts(text: str) -> str:
 
 
 def _phonetize_chunk(t: str) -> str:
+    from app.money_speech import expand_money_and_hours_for_speech
+
+    t = expand_money_and_hours_for_speech(t)
     t = re.sub(r"\bC\s*\.?\s*P\s*\.?\s*F\b", "cê pê efe", t, flags=re.IGNORECASE)
     t = re.sub(r"\bCPF\b", "cê pê efe", t, flags=re.IGNORECASE)
     t = re.sub(r"\bT\s+E\s+A\b", "Têa", t, flags=re.IGNORECASE)

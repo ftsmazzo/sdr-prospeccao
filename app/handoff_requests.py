@@ -206,13 +206,17 @@ def handoff_registered_reply(
     motivo: str,
 ) -> str:
     first = (nome or "").strip().split()[0] if nome else ""
-    motivo_l = (motivo or "sua dúvida").replace("_", " ")
-    if motivo_l in ("especialista", "geral", "loop stock", "loop_stock"):
-        motivo_l = "isso"
-    elif motivo_l == "suporte aluno":
-        motivo_l = "seu atendimento"
-    elif motivo_l in ("curso fora lista", "curso fora catalogo", "uti"):
+    raw = (motivo or "").strip()
+    key = raw.replace("_", " ").casefold()
+    # Slugs genéricos → fallback curto; frases reais (ex. vencimento) passam intactas.
+    if key in ("", "especialista", "geral", "loop stock"):
+        motivo_l = "sua dúvida"
+    elif key in ("curso fora lista", "curso fora catalogo", "uti"):
         motivo_l = "essa especialização"
+    elif key == "suporte aluno":
+        motivo_l = "o suporte do polo"
+    else:
+        motivo_l = raw.replace("_", " ")
     if first:
         return (
             f"Registrei seu pedido, {first}. Um especialista do polo vai falar "

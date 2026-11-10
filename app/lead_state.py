@@ -54,6 +54,8 @@ STATE_WHITELIST = {
     "e_aluno_atual",
     "aluno_e_terceiro",
     "aluno_nome",
+    "aluno_relacao",
+    "aluno_genero",
     "lead_irritado",
     "pediu_desconto_ou_condicao",
     "duvida_juridica",
@@ -206,6 +208,8 @@ def default_lead_state() -> dict[str, Any]:
         "e_aluno_atual": False,
         "aluno_e_terceiro": False,
         "aluno_nome": None,
+        "aluno_relacao": None,
+        "aluno_genero": None,
         "lead_irritado": False,
         "pediu_desconto_ou_condicao": False,
         "duvida_juridica": False,
@@ -601,16 +605,110 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
             meta["desconto_respondido"] = True
         return "contrato_enviado"
 
-    if etapa in ("aluno_atual", "matriculado"):
-        meta["etapa"] = etapa
+    if etapa == "aluno_atual":
+        meta["etapa"] = "aluno_atual"
         if mark_desconto_respondido:
             meta["desconto_respondido"] = True
-        return etapa
+        return "aluno_atual"
+
+    if etapa == "matriculado":
+        # Nova compra (mesmo telefone): não apaga matriculas[]; reabre funil.
+        if _should_reopen_purchase(ls, meta):
+            meta["pending_contract"] = False
+            meta["contract_sent"] = False
+            ls["aceite_matricula"] = bool(ls.get("aceite_matricula")) and bool(
+                ls.get("curso_escolhido")
+            )
+            # Se já tem curso novo escolhido + aceite → fechamento; senão qualificação/recomendação.
+            if (
+                ls.get("graduacao") == "concluida"
+                and ls.get("curso_escolhido")
+                and ls.get("aceite_matricula")
+                and _curso_no_catalogo(str(ls.get("curso_escolhido") or ""))
+            ):
+                meta["etapa"] = "fechamento"
+                meta["objecoes_sem_avanco"] = 0
+                if mark_desconto_respondido:
+                    meta["desconto_respondido"] = True
+                return "fechamento"
+            if ls.get("graduacao") == "concluida" and (
+                ls.get("curso_escolhido") or ls.get("area_interesse")
+            ):
+                meta["etapa"] = "recomendacao"
+                meta["objecoes_sem_avanco"] = 0
+                if mark_desconto_respondido:
+                    meta["desconto_respondido"] = True
+                return "recomendacao"
+            meta["etapa"] = "qualificacao"
+            if mark_desconto_respondido:
+                meta["desconto_respondido"] = True
+            return "qualificacao"
+        meta["etapa"] = "matriculado"
+        if mark_desconto_respondido:
+            meta["desconto_respondido"] = True
+        return "matriculado"
 
     meta["etapa"] = etapa
     if mark_desconto_respondido:
         meta["desconto_respondido"] = True
     return meta["etapa"]
+
+
+def _enrolled_course_names(meta: dict[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for item in meta.get("matriculas") or []:
+        if isinstance(item, dict) and item.get("curso"):
+            out.add(str(item["curso"]).strip())
+    return out
+
+
+def begin_new_purchase(meta: dict[str, Any], ls: dict[str, Any]) -> None:
+    """Prepara nova compra sem apagar meta.matriculas[]."""
+    enrolled = _enrolled_course_names(meta)
+    curso = str(ls.get("curso_escolhido") or "").strip()
+    # Curso já matriculado (compra para si) não serve para a nova jornada.
+    if curso and curso in enrolled:
+        ls["curso_escolhido"] = None
+        ls["curso_recomendado"] = None
+        ls["curso_alternativo"] = None
+        ls["aceite_matricula"] = False
+    # Graduação/interesse do comprador não valem para aluno terceiro.
+    if ls.get("aluno_e_terceiro"):
+        ls["graduacao"] = None
+        ls["area_interesse"] = None
+        ls["objetivo"] = None
+        ls["aceite_matricula"] = False
+    meta["pending_contract"] = False
+    meta["contract_sent"] = False
+    meta["_reopen_purchase"] = True
+    meta["lead_state"] = ls
+    # Sai de matriculado imediatamente (prompt + gates usam a etapa atual).
+    if meta.get("etapa") == "matriculado":
+        if (
+            ls.get("graduacao") == "concluida"
+            and ls.get("curso_escolhido")
+            and ls.get("aceite_matricula")
+        ):
+            meta["etapa"] = "fechamento"
+        elif ls.get("graduacao") == "concluida" and (
+            ls.get("curso_escolhido") or ls.get("area_interesse")
+        ):
+            meta["etapa"] = "recomendacao"
+        else:
+            meta["etapa"] = "qualificacao"
+        meta["objecoes_sem_avanco"] = 0
+
+
+def _should_reopen_purchase(ls: dict[str, Any], meta: dict[str, Any]) -> bool:
+    if meta.get("_reopen_purchase"):
+        return True
+    if ls.get("aluno_e_terceiro"):
+        return True
+    enrolled = _enrolled_course_names(meta)
+    curso = str(ls.get("curso_escolhido") or "").strip()
+    if curso and _curso_no_catalogo(curso) and curso not in enrolled:
+        return True
+    return False
 
 
 def can_run_action(meta: dict[str, Any], action: str | None) -> tuple[bool, str]:
@@ -704,10 +802,11 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
         ]
 
     if reason == "promessa_lembrete":
+        # Só usar se o caller confirmou despedida do lead; senão variantes neutras.
         return [
-            "Quando quiser retomar, é só me chamar aqui.",
-            "Combinado. Quando quiser retomar, é só me chamar por aqui.",
-            "Sem problema — quando quiser retomar, é só me chamar aqui.",
+            "Me conta o que você quer resolver agora que eu te oriento por aqui?",
+            "Pode me dizer em uma frase o que você precisa — curso, matrícula ou outra dúvida?",
+            "Sobre o que você falou: prefere seguir com o curso ou tirar outra dúvida primeiro?",
         ]
 
     curso = ls.get("curso_escolhido") or "esse curso"
@@ -788,10 +887,49 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
             ),
         ]
 
-    # Residual genérico: só despedida segura (2ª regen deveria ter respondido).
+    if reason == "dados_antes_fechamento":
+        return [
+            (
+                "Antes de pedir dados, me confirma: você quer seguir com a matrícula "
+                "nesse curso agora?"
+            ),
+            (
+                "Entendi. Você quer que eu te explique o curso ou já prefere seguir "
+                "com a matrícula?"
+            ),
+        ]
+
+    # Residual genérico: pergunta neutra — NUNCA despedida.
     return [
-        "Quando quiser retomar, é só me chamar aqui.",
+        "Me conta o que você precisa saber agora que eu te respondo por aqui?",
+        "Pode me repetir o que você quer seguir — curso, matrícula ou outra dúvida?",
+        "Sobre o que você falou: o que você prefere fazer agora?",
     ]
+
+
+_FAREWELL_STOCK = (
+    "Quando quiser retomar, é só me chamar aqui.",
+    "Combinado. Quando quiser retomar, é só me chamar por aqui.",
+)
+
+
+def lead_says_farewell_or_space(text: str) -> bool:
+    """Despedida / pedido de espaço (stock de despedida só neste caso)."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    return bool(
+        re.search(
+            r"(?i)\b("
+            r"at[eé]\s+mais|at[eé]\s+logo|tchau|falamos\s+depois"
+            r"|vou\s+pensar|pensar\s+(?:um\s+pouco|mais|com\s+calma)"
+            r"|entro\s+em\s+contato|depois\s+(?:te\s+)?(?:falo|aviso)"
+            r"|por\s+enquanto|deixa\s+pra\s+(?:l[aá]|depois)"
+            r"|n[aã]o\s+preciso|obrigad[oa]\s+pela\s+(?:aten[cç][aã]o|ajuda)"
+            r")\b",
+            raw,
+        )
+    )
 
 
 def rewrite_blocked_action_reply(
@@ -800,16 +938,23 @@ def rewrite_blocked_action_reply(
     ls: dict[str, Any],
     *,
     avoid: str | None = None,
+    user_text: str = "",
 ) -> str:
     """Fallback stock após regeneração falhar. Nunca repete o texto em `avoid`."""
     _ = reply
-    variants = _stock_variants(reason, ls)
+    if lead_says_farewell_or_space(user_text) and reason in (
+        "promessa_lembrete",
+        "promessa_sem_acao",
+    ):
+        variants = list(_FAREWELL_STOCK)
+    else:
+        variants = _stock_variants(reason, ls)
     avoid_norm = (avoid or "").strip()
     for text in variants:
         if text.strip() != avoid_norm:
             return text
     return variants[-1] if variants else (
-        "Me conta o que você precisa saber agora que eu te respondo por aqui."
+        "Me conta o que você precisa saber agora que eu te respondo por aqui?"
     )
 
 

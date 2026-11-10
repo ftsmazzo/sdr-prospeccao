@@ -7,6 +7,7 @@ from pathlib import Path
 from fpdf import FPDF
 
 from app.pricing import amount_label_for_course, price_for_course
+from app.schemas import format_cpf
 
 _FONT_CANDIDATES = (
     Path(__file__).resolve().parent.parent / "static" / "fonts" / "DejaVuSans.ttf",
@@ -32,7 +33,8 @@ def build_contrato_pdf(
     course_hours: int | None = None,
 ) -> bytes:
     nome = lead_name.strip() or "Interessado(a)"
-    cpf_line = cpf.strip() or "a confirmar"
+    cpf_raw = cpf.strip()
+    cpf_line = format_cpf(cpf_raw) if cpf_raw else "a confirmar"
     nasc = birth_date.strip() or "a confirmar"
     agent = (agent_name or "Clara").strip() or "Clara"
     band = price_for_course(course)
