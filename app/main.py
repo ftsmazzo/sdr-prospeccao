@@ -67,7 +67,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.10.0",
+        "version": "0.10.1",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
