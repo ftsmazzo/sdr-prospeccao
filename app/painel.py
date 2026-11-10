@@ -21,6 +21,28 @@ FUNNEL_COLUMNS = (
     "handoff_humano",
 )
 
+# Níveis do board (evita scroll horizontal tipo kanban infinito)
+FUNNEL_LEVELS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Entrada", ("primeiro_contato", "abertura", "qualificacao")),
+    ("Negociação", ("recomendacao", "objecao", "fechamento")),
+    ("Fechamento", ("contrato_enviado", "matriculado", "esfriou", "handoff_humano")),
+)
+
+ETAPA_LABELS = {
+    "primeiro_contato": "1º contato",
+    "abertura": "Abertura",
+    "qualificacao": "Qualificação",
+    "recomendacao": "Recomendação",
+    "objecao": "Objeção",
+    "fechamento": "Fechamento",
+    "contrato_enviado": "Contrato",
+    "matriculado": "Matriculado",
+    "esfriou": "Esfriou",
+    "handoff_humano": "Handoff",
+    "nao_elegivel": "Não elegível",
+    "aluno_atual": "Aluno atual",
+}
+
 
 def _scan_lead_phones(settings: Settings) -> list[str]:
     """Lista phones com meta no Redis (melhor esforço)."""
@@ -106,6 +128,15 @@ def collect_painel(settings: Settings) -> dict[str, Any]:
                 }
             )
 
+    interacoes: list[dict[str, Any]] = []
+    for etapa, cards in by_etapa.items():
+        for c in cards:
+            interacoes.append({**c, "etapa": etapa})
+    interacoes.sort(
+        key=lambda c: str(c.get("ultima_interacao") or ""),
+        reverse=True,
+    )
+
     return {
         "ok": True,
         "indicadores": {
@@ -113,9 +144,13 @@ def collect_painel(settings: Settings) -> dict[str, Any]:
             "em_negociacao": negociacao,
             "contratos_enviados": contratos,
             "matriculas": mats,
+            "total_leads": len(phones),
             "conversao_por_origem": origem_counts,
         },
         "by_etapa": by_etapa,
+        "interacoes": interacoes,
+        "levels": FUNNEL_LEVELS,
+        "etapa_labels": ETAPA_LABELS,
         "matriculas": matriculas,
         "handoffs": handoffs,
         "phones_scanned": len(phones),

@@ -185,104 +185,418 @@ def register_fase4_routes(app: FastAPI, *, admin_authorized) -> None:
         if action == "pause":
             meta["retomadas_paused"] = True
             cancel_retomadas(digits, get_scheduler())
+            mem.set_meta(digits, meta)
         elif action == "opt_out":
             meta["opt_out"] = True
             meta["retomadas_paused"] = True
             cancel_retomadas(digits, get_scheduler())
+            mem.set_meta(digits, meta)
         elif action == "reset":
             meta["etapa"] = "qualificacao"
             meta["opt_out"] = False
             meta["retomadas_paused"] = False
-        mem.set_meta(digits, meta)
+            mem.set_meta(digits, meta)
+        elif action == "clear":
+            # Zera histórico + meta do lead (cenários de teste / demo).
+            cancel_retomadas(digits, get_scheduler())
+            mem.clear(digits)
+        else:
+            mem.set_meta(digits, meta)
         return RedirectResponse(url=f"/admin/painel?secret={secret}", status_code=303)
 
 
+def _esc(text: object) -> str:
+    return (
+        str(text or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _render_lead_card(c: dict, secret: str, *, compact: bool = False) -> str:
+    nome = _esc(c.get("nome"))
+    phone = _esc(c.get("phone"))
+    curso = _esc(c.get("curso") or "—")
+    origem = _esc(c.get("origem") or "whatsapp")
+    briefing = _esc((c.get("briefing") or "")[:120])
+    badges = []
+    if c.get("retomadas_paused"):
+        badges.append('<span class="badge warn">pausado</span>')
+    if c.get("opt_out"):
+        badges.append('<span class="badge danger">opt-out</span>')
+    badge_html = " ".join(badges)
+    brief_html = f'<p class="brief">{briefing}</p>' if briefing and not compact else ""
+    return f"""
+    <article class="lead-card">
+      <div class="lead-top">
+        <div>
+          <div class="lead-name">{nome}</div>
+          <div class="lead-meta">{phone} · {origem}</div>
+        </div>
+        {badge_html}
+      </div>
+      <div class="lead-course">{curso}</div>
+      {brief_html}
+      <form class="lead-actions" method="post" action="/admin/leads/{phone}/painel-action">
+        <input type="hidden" name="secret" value="{_esc(secret)}"/>
+        <button type="submit" name="action" value="pause" class="btn ghost">Pausar</button>
+        <button type="submit" name="action" value="reset" class="btn ghost">Reset etapa</button>
+        <button type="submit" name="action" value="clear" class="btn danger"
+          onclick="return confirm('Limpar toda a interação deste número? Histórico e estado serão apagados.');">
+          Limpar interação
+        </button>
+      </form>
+    </article>"""
+
+
 def _render_painel(data: dict, secret: str) -> str:
+    from app.painel import ETAPA_LABELS, FUNNEL_LEVELS
+
     ind = data["indicadores"]
-    cols = []
-    for etapa, cards in data["by_etapa"].items():
-        items = []
-        for c in cards:
-            briefing = (c.get("briefing") or "")[:160]
-            items.append(
-                "<article>"
-                f"<strong>{c['nome']}</strong><br/><small>{c['phone']}</small><br/>"
-                f"<small>{c.get('curso') or '—'}</small><br/>"
-                f"<small>origem: {c.get('origem')}</small>"
-                f"<p style='font-size:.8rem;opacity:.85'>{briefing}</p>"
-                f"<form style='display:flex;gap:.3rem;flex-wrap:wrap' method='post' "
-                f"action='/admin/leads/{c['phone']}/painel-action'>"
-                f"<input type='hidden' name='secret' value='{secret}'/>"
-                "<button name='action' value='pause'>Pausar</button>"
-                "<button name='action' value='opt_out'>Opt-out</button>"
-                "<button name='action' value='reset'>Reset etapa</button>"
-                "</form></article>"
+    by_etapa = data.get("by_etapa") or {}
+    labels = data.get("etapa_labels") or ETAPA_LABELS
+    levels = data.get("levels") or FUNNEL_LEVELS
+
+    level_blocks: list[str] = []
+    for level_name, etapas in levels:
+        cols: list[str] = []
+        for etapa in etapas:
+            cards = by_etapa.get(etapa) or []
+            items = "".join(_render_lead_card(c, secret) for c in cards)
+            if not items:
+                items = '<p class="empty">Nenhum lead neste estágio</p>'
+            label = labels.get(etapa, etapa)
+            cols.append(
+                f'<section class="stage">'
+                f'<header class="stage-head"><h3>{_esc(label)}</h3>'
+                f'<span class="count">{len(cards)}</span></header>'
+                f'<div class="stage-body">{items}</div></section>'
             )
-        body = "".join(items) or "<p class='empty'>—</p>"
-        cols.append(
-            f"<section><h2>{etapa} <span>({len(cards)})</span></h2>{body}</section>"
+        level_blocks.append(
+            f'<div class="level">'
+            f'<div class="level-label">{_esc(level_name)}</div>'
+            f'<div class="level-grid cols-{len(etapas)}">{"".join(cols)}</div>'
+            f"</div>"
         )
+
+    # Estágios fora do mapa padrão (ex.: nao_elegivel)
+    known = {e for _, ets in levels for e in ets}
+    extra_cols = []
+    for etapa, cards in by_etapa.items():
+        if etapa in known or not cards:
+            continue
+        items = "".join(_render_lead_card(c, secret) for c in cards)
+        label = labels.get(etapa, etapa)
+        extra_cols.append(
+            f'<section class="stage">'
+            f'<header class="stage-head"><h3>{_esc(label)}</h3>'
+            f'<span class="count">{len(cards)}</span></header>'
+            f'<div class="stage-body">{items}</div></section>'
+        )
+    if extra_cols:
+        level_blocks.append(
+            '<div class="level"><div class="level-label">Outros</div>'
+            f'<div class="level-grid cols-3">{"".join(extra_cols)}</div></div>'
+        )
+
+    inter_rows = []
+    for c in data.get("interacoes") or []:
+        etapa = c.get("etapa") or ""
+        inter_rows.append(
+            "<tr>"
+            f"<td><strong>{_esc(c.get('nome'))}</strong><div class='muted'>{_esc(c.get('phone'))}</div></td>"
+            f"<td><span class='pill'>{_esc(labels.get(etapa, etapa))}</span></td>"
+            f"<td>{_esc(c.get('curso') or '—')}</td>"
+            f"<td>{_esc(c.get('origem') or '—')}</td>"
+            f"<td class='actions-cell'>"
+            f"<form method='post' action='/admin/leads/{_esc(c.get('phone'))}/painel-action'>"
+            f"<input type='hidden' name='secret' value='{_esc(secret)}'/>"
+            "<button type='submit' name='action' value='clear' class='btn danger sm'"
+            " onclick=\"return confirm('Limpar toda a interação deste número?');\">"
+            "Limpar interação</button></form></td>"
+            "</tr>"
+        )
+
     mats = []
-    for m in data["matriculas"]:
+    for m in data.get("matriculas") or []:
         extra = ""
         if m.get("comprador_nome") and m.get("comprador_nome") != m.get("aluno_nome"):
-            extra = f" (compra: {m.get('comprador_nome')})"
+            extra = f" · compra: {_esc(m.get('comprador_nome'))}"
         mats.append(
-            f"<li><strong>{m.get('aluno_nome') or '?'}</strong> — {m.get('curso')}"
-            f"{extra} · {m.get('phone')}</li>"
+            f"<li><strong>{_esc(m.get('aluno_nome') or '?')}</strong> — "
+            f"{_esc(m.get('curso'))}{extra}"
+            f"<div class='muted'>{_esc(m.get('phone'))}</div></li>"
         )
     hands = [
-        f"<li>{h.get('nome')} ({h.get('phone')}) — {h.get('motivo')} · etapa {h.get('etapa')}</li>"
-        for h in data["handoffs"]
+        f"<li><strong>{_esc(h.get('nome'))}</strong> — {_esc(h.get('motivo'))}"
+        f"<div class='muted'>{_esc(h.get('phone'))} · {_esc(labels.get(h.get('etapa'), h.get('etapa')))}</div></li>"
+        for h in data.get("handoffs") or []
     ]
     conv = " · ".join(
-        f"{k}: {v}" for k, v in (ind.get("conversao_por_origem") or {}).items()
+        f"{_esc(k)}: {v}" for k, v in (ind.get("conversao_por_origem") or {}).items()
     ) or "—"
+
     return f"""<!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"/>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Painel do funil</title>
+<title>CRM · Funil comercial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
-body{{margin:0;font-family:system-ui,sans-serif;background:#0b1f18;color:#e9f5ef}}
-header{{padding:1rem 1.25rem;border-bottom:1px solid #1e3d31;display:flex;flex-wrap:wrap;gap:1rem;align-items:end}}
-.kpi{{background:#143528;padding:.7rem 1rem;border-radius:12px;min-width:7rem}}
-.kpi b{{display:block;font-size:1.3rem}}
-.board{{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(14rem,1fr);gap:.75rem;padding:1rem;overflow-x:auto}}
-section{{background:#10291f;border-radius:14px;padding:.75rem;min-height:12rem}}
-h2{{font-size:.95rem;margin:.2rem 0 .6rem;text-transform:capitalize}}
-article{{background:#173828;border-radius:10px;padding:.65rem;margin:0 0 .5rem;font-size:.88rem}}
-button{{font:inherit;font-size:.72rem;border:0;border-radius:8px;padding:.35rem .5rem;background:#2d8f63;color:#fff;cursor:pointer}}
-.tabs{{padding:1rem 1.25rem}}
-</style></head>
+:root {{
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #1d4ed8;
+  --accent-soft: #eff6ff;
+  --danger: #b91c1c;
+  --danger-soft: #fef2f2;
+  --warn: #b45309;
+  --warn-soft: #fffbeb;
+  --ok: #047857;
+  --shadow: 0 1px 2px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.04);
+  --radius: 12px;
+  --font: "IBM Plex Sans", system-ui, sans-serif;
+}}
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; min-height: 100%; }}
+body {{
+  font-family: var(--font);
+  color: var(--ink);
+  background:
+    radial-gradient(900px 420px at 100% -10%, #dbeafe 0%, transparent 55%),
+    linear-gradient(180deg, #eef2f7 0%, var(--bg) 40%, #eef2f7 100%);
+}}
+a {{ color: var(--accent); }}
+.shell {{ max-width: 1280px; margin: 0 auto; padding: 1.25rem 1.25rem 3rem; }}
+.topbar {{
+  display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;
+  justify-content: space-between; margin-bottom: 1.25rem;
+}}
+.brand-block h1 {{
+  margin: .15rem 0 0; font-size: 1.55rem; font-weight: 700; letter-spacing: -.02em;
+}}
+.brand-block p {{ margin: 0; color: var(--muted); font-size: .92rem; }}
+.nav-pills {{ display: flex; gap: .5rem; flex-wrap: wrap; }}
+.nav-pills a {{
+  text-decoration: none; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 999px; padding: .45rem .85rem;
+  font-size: .85rem; font-weight: 500; box-shadow: var(--shadow);
+}}
+.nav-pills a:hover {{ border-color: #bfdbfe; background: var(--accent-soft); }}
+.kpis {{
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .75rem;
+  margin-bottom: 1.35rem;
+}}
+.kpi {{
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: .9rem 1rem; box-shadow: var(--shadow);
+}}
+.kpi span {{ display: block; color: var(--muted); font-size: .78rem; font-weight: 500; }}
+.kpi b {{ display: block; margin-top: .25rem; font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; }}
+.kpi .sub {{ margin-top: .35rem; font-size: .75rem; color: var(--muted); line-height: 1.3; }}
+.panel {{
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: var(--shadow); padding: 1rem 1.1rem 1.15rem; margin-bottom: 1rem;
+}}
+.panel-head {{
+  display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
+  margin-bottom: .85rem;
+}}
+.panel-head h2 {{ margin: 0; font-size: 1.05rem; font-weight: 650; }}
+.panel-head p {{ margin: 0; color: var(--muted); font-size: .85rem; }}
+.level {{ margin-bottom: 1rem; }}
+.level:last-child {{ margin-bottom: 0; }}
+.level-label {{
+  font-size: .72rem; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 .45rem .15rem;
+}}
+.level-grid {{
+  display: grid; gap: .65rem; align-items: start;
+}}
+.level-grid.cols-3 {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+.level-grid.cols-4 {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+.stage {{
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px;
+  min-height: 8.5rem; display: flex; flex-direction: column;
+}}
+.stage-head {{
+  display: flex; justify-content: space-between; align-items: center;
+  padding: .65rem .75rem; border-bottom: 1px solid var(--line);
+}}
+.stage-head h3 {{ margin: 0; font-size: .88rem; font-weight: 600; }}
+.count {{
+  min-width: 1.4rem; height: 1.4rem; border-radius: 999px; background: #e2e8f0;
+  color: var(--ink); font-size: .72rem; font-weight: 700; display: grid; place-items: center;
+  font-variant-numeric: tabular-nums;
+}}
+.stage-body {{ padding: .55rem; display: flex; flex-direction: column; gap: .45rem; max-height: 18rem; overflow: auto; }}
+.lead-card {{
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: .6rem .65rem;
+}}
+.lead-top {{ display: flex; justify-content: space-between; gap: .5rem; align-items: flex-start; }}
+.lead-name {{ font-size: .9rem; font-weight: 600; }}
+.lead-meta {{ font-size: .72rem; color: var(--muted); margin-top: .1rem; }}
+.lead-course {{ font-size: .78rem; color: #334155; margin-top: .35rem; }}
+.brief {{ margin: .4rem 0 0; font-size: .72rem; color: var(--muted); line-height: 1.35; }}
+.lead-actions {{ display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .55rem; }}
+.btn {{
+  font: inherit; font-size: .72rem; font-weight: 600; border-radius: 8px; border: 1px solid var(--line);
+  padding: .32rem .55rem; background: var(--surface); color: var(--ink); cursor: pointer;
+}}
+.btn:hover {{ border-color: #cbd5e1; }}
+.btn:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
+.btn.ghost {{ background: #fff; }}
+.btn.danger {{ background: var(--danger-soft); color: var(--danger); border-color: #fecaca; }}
+.btn.danger:hover {{ background: #fee2e2; }}
+.btn.sm {{ padding: .28rem .5rem; }}
+.badge {{
+  font-size: .65rem; font-weight: 650; border-radius: 999px; padding: .12rem .4rem;
+  text-transform: uppercase; letter-spacing: .03em;
+}}
+.badge.warn {{ background: var(--warn-soft); color: var(--warn); }}
+.badge.danger {{ background: var(--danger-soft); color: var(--danger); }}
+.empty {{ margin: .4rem; color: var(--muted); font-size: .8rem; }}
+.muted {{ color: var(--muted); font-size: .75rem; }}
+.grid-2 {{ display: grid; grid-template-columns: 1.4fr .9fr; gap: 1rem; }}
+table {{ width: 100%; border-collapse: collapse; font-size: .88rem; }}
+th, td {{ text-align: left; padding: .65rem .4rem; border-bottom: 1px solid var(--line); vertical-align: middle; }}
+th {{ color: var(--muted); font-size: .72rem; font-weight: 650; text-transform: uppercase; letter-spacing: .03em; }}
+.pill {{
+  display: inline-block; background: var(--accent-soft); color: #1e40af; border-radius: 999px;
+  padding: .15rem .5rem; font-size: .72rem; font-weight: 600;
+}}
+.actions-cell form {{ margin: 0; }}
+.side-list {{ list-style: none; margin: 0; padding: 0; }}
+.side-list li {{ padding: .55rem 0; border-bottom: 1px solid var(--line); font-size: .88rem; }}
+.side-list li:last-child {{ border-bottom: 0; }}
+@media (max-width: 980px) {{
+  .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+  .level-grid.cols-3, .level-grid.cols-4 {{ grid-template-columns: 1fr 1fr; }}
+  .grid-2 {{ grid-template-columns: 1fr; }}
+}}
+@media (max-width: 640px) {{
+  .kpis {{ grid-template-columns: 1fr 1fr; }}
+  .level-grid.cols-3, .level-grid.cols-4 {{ grid-template-columns: 1fr; }}
+}}
+::selection {{ background: #bfdbfe; }}
+</style>
+</head>
 <body>
-<header>
-  <div><div style="opacity:.7;font-size:.75rem">Edu SDR · demo-v3</div>
-  <div style="font-size:1.3rem;font-weight:700">Painel do funil</div></div>
-  <div class="kpi"><span>Novos</span><b>{ind['leads_novos']}</b></div>
-  <div class="kpi"><span>Negociação</span><b>{ind['em_negociacao']}</b></div>
-  <div class="kpi"><span>Contratos</span><b>{ind['contratos_enviados']}</b></div>
-  <div class="kpi"><span>Matrículas</span><b>{ind['matriculas']}</b></div>
-  <div class="kpi"><span>Origens</span><b style="font-size:.85rem">{conv}</b></div>
-</header>
-<div class="board">{"".join(cols)}</div>
-<div class="tabs">
-  <h3>Matrículas</h3><ul>{"".join(mats) or "<li>Nenhuma</li>"}</ul>
-  <h3>Encaminhamentos</h3><ul>{"".join(hands) or "<li>Nenhum</li>"}</ul>
-</div>
-</body></html>"""
+<main class="shell">
+  <div class="topbar">
+    <div class="brand-block">
+      <h1>CRM comercial</h1>
+      <p>Funil da Clara · visão operacional do atendimento</p>
+    </div>
+    <nav class="nav-pills">
+      <a href="#funil">Funil</a>
+      <a href="#teste">Teste / limpar</a>
+      <a href="#registros">Matrículas &amp; handoffs</a>
+      <a href="/interesse">Formulário público</a>
+    </nav>
+  </div>
+
+  <section class="kpis" aria-label="Indicadores">
+    <div class="kpi"><span>Leads ativos</span><b>{ind.get('total_leads', data.get('phones_scanned', 0))}</b></div>
+    <div class="kpi"><span>Novos (24h)</span><b>{ind['leads_novos']}</b></div>
+    <div class="kpi"><span>Em negociação</span><b>{ind['em_negociacao']}</b></div>
+    <div class="kpi"><span>Contratos</span><b>{ind['contratos_enviados']}</b></div>
+    <div class="kpi"><span>Matrículas</span><b>{ind['matriculas']}</b><div class="sub">{conv}</div></div>
+  </section>
+
+  <section class="panel" id="funil">
+    <div class="panel-head">
+      <div>
+        <h2>Funil por estágio</h2>
+        <p>Organizado em três níveis — entrada, negociação e fechamento.</p>
+      </div>
+    </div>
+    {"".join(level_blocks)}
+  </section>
+
+  <section class="panel" id="teste">
+    <div class="panel-head">
+      <div>
+        <h2>Números em interação</h2>
+        <p>Use <strong>Limpar interação</strong> para zerar histórico e estado — ideal para testar vários cenários no mesmo chip.</p>
+      </div>
+    </div>
+    <div style="overflow:auto">
+      <table>
+        <thead>
+          <tr><th>Lead</th><th>Estágio</th><th>Curso / interesse</th><th>Origem</th><th></th></tr>
+        </thead>
+        <tbody>
+          {"".join(inter_rows) or '<tr><td colspan="5" class="muted">Nenhuma interação no momento.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="grid-2" id="registros">
+    <section class="panel">
+      <div class="panel-head"><div><h2>Matrículas</h2><p>Confirmações de checkout demo.</p></div></div>
+      <ul class="side-list">{"".join(mats) or '<li class="muted">Nenhuma matrícula ainda.</li>'}</ul>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><div><h2>Encaminhamentos</h2><p>Handoffs registrados para especialista.</p></div></div>
+      <ul class="side-list">{"".join(hands) or '<li class="muted">Nenhum handoff aberto.</li>'}</ul>
+    </section>
+  </div>
+</main>
+</body>
+</html>"""
 
 
-_PAINEL_LOGIN_HTML = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/>
+_PAINEL_LOGIN_HTML = """<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Painel — login</title>
-<style>body{font-family:Georgia,serif;background:#0f2f24;color:#eef6f1;display:grid;place-items:center;min-height:100vh;margin:0}
-form{background:#163d30;padding:1.5rem;border-radius:16px;width:min(22rem,92vw)}
-input,button{width:100%;padding:.75rem;margin:.4rem 0;border-radius:10px;border:0;font:inherit}
-button{background:#2d8f63;color:#fff;font-weight:700;cursor:pointer}</style></head>
-<body><form method="get"><h1>Painel do funil</h1>
-<p>Senha admin (mesmo secret do deploy)</p>
-<input type="password" name="secret" placeholder="senha" required/>
-<button type="submit">Entrar</button></form></body></html>"""
+<title>CRM · acesso</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --accent:#1d4ed8; }
+body {
+  margin:0; min-height:100vh; display:grid; place-items:center;
+  font-family:"IBM Plex Sans",system-ui,sans-serif; color:var(--ink);
+  background: radial-gradient(700px 360px at 80% 0%, #dbeafe 0%, transparent 55%), #f4f6f9;
+}
+form {
+  width:min(22rem,92vw); background:#fff; border:1px solid var(--line);
+  border-radius:16px; padding:1.4rem 1.35rem 1.5rem;
+  box-shadow:0 1px 2px rgba(15,23,42,.06), 0 12px 32px rgba(15,23,42,.06);
+}
+h1 { margin:0 0 .35rem; font-size:1.35rem; letter-spacing:-.02em; }
+p { margin:0 0 1rem; color:var(--muted); font-size:.92rem; }
+label { display:block; font-size:.8rem; font-weight:600; margin:0 0 .35rem; }
+input,button { width:100%; font:inherit; border-radius:10px; padding:.75rem .85rem; }
+input { border:1px solid var(--line); margin-bottom:.85rem; }
+button { border:0; background:var(--accent); color:#fff; font-weight:650; cursor:pointer; }
+button:hover { background:#1e40af; }
+button:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+</style>
+</head>
+<body>
+<form method="get">
+  <h1>CRM comercial</h1>
+  <p>Entre com o secret admin do deploy para abrir o funil.</p>
+  <label for="secret">Senha admin</label>
+  <input id="secret" type="password" name="secret" placeholder="secret" required autocomplete="current-password"/>
+  <button type="submit">Abrir painel</button>
+</form>
+</body>
+</html>"""
 
 
 _INTERESSE_HTML = """<!doctype html>
