@@ -240,6 +240,7 @@ async def to_spoken_script(
                     ),
                 },
             ],
+            # Sonnet 5: client omite temperature; outros modelos usam 0.55.
             temperature=0.55,
         )
         spoken = phonetize_for_tts(scrub_for_tts(spoken))

@@ -161,16 +161,21 @@ class FollowUpScheduler:
         course = job.get("course") or "Pós-Graduação EAD Faveni"
         first = name.split()[0] if name else "oi"
 
+        from app.pricing import lookup_course_hours
+
+        hours = lookup_course_hours(course)
         pdf = build_contrato_pdf(
             lead_name=name,
             cpf=cpf,
             birth_date=birth,
             course=course,
-            agent_name=self.settings.agent_name,
+            agent_name=self.settings.agent_name or "Clara",
+            course_hours=hours,
         )
         caption = (
-            f"{first}, como combinei: segue o informativo/contrato demonstrativo "
-            f"já com seus dados para {course}."
+            f"{first}, como combinei: montei o informativo/contrato demonstrativo "
+            f"da pós em {course} com seus dados. Dá uma olhada com calma — "
+            "é só demonstração, sem cobrança."
         )
         await evo.send_document(
             phone,
@@ -186,9 +191,9 @@ class FollowUpScheduler:
             await evo.send_text(
                 phone,
                 (
-                    f"Se estiver tudo certo no contrato, aqui está o link para confirmar "
-                    f"a matrícula (demonstração):\n{link}\n\n"
-                    "Depois que confirmar, aí você envia a documentação "
+                    f"Se os dados do contrato estiverem ok, aqui está o link pra confirmar "
+                    f"a matrícula (pagamento simulado):\n{link}\n\n"
+                    "Depois que confirmar, você pode mandar a documentação por aqui "
                     "(RG ou CNH, diploma ou declaração, histórico e certidão)."
                 ),
                 delay_ms=3200,

@@ -29,6 +29,8 @@
 
 - Padrão: `OPENROUTER_MODEL=anthropic/claude-sonnet-5` (melhor fluxo até contrato na demo).
 - Alternativa: `openai/gpt-4.1-mini` — só trocar a env; sem redeploy de código.
+- Agente: tool calling forçado (`responder`) + `cache_control` na parte fixa do system prompt; temperature omitida no Sonnet 5.
+- Probe local (máx. 3 chamadas): `python scripts/probe_tool_json.py`.
 
 ## Operação
 

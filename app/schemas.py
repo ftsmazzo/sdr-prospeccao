@@ -30,6 +30,59 @@ class AgentResponse(BaseModel):
     offer: OfferPayload | None = None
 
 
+RESPONDER_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "responder",
+        "description": (
+            "Emite a resposta estruturada ao lead no WhatsApp. "
+            "Sempre chame esta ferramenta com reply + state_update + action + offer."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reply": {"type": "string", "minLength": 1},
+                "state_update": {"type": "object"},
+                "action": {
+                    "type": ["string", "null"],
+                    "enum": [
+                        "LEAD_DATA",
+                        "FOLLOWUP_DOC",
+                        "CHECKOUT_READY",
+                        "REGISTER_HANDOFF",
+                        None,
+                    ],
+                },
+                "action_data": {"type": "object"},
+                "offer": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["contrato", "encaminhamento", "resumo"],
+                                },
+                                "motivo": {"type": ["string", "null"]},
+                            },
+                            "required": ["type"],
+                        },
+                        {"type": "null"},
+                    ]
+                },
+            },
+            "required": ["reply", "state_update"],
+            "additionalProperties": True,
+        },
+    },
+}
+
+RESPONDER_TOOL_CHOICE: dict[str, Any] = {
+    "type": "function",
+    "function": {"name": "responder"},
+}
+
+
 def _strip_fences(raw: str) -> str:
     t = raw.strip()
     if t.startswith("```"):

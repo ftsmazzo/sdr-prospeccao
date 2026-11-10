@@ -764,6 +764,30 @@ def _stock_variants(reason: str, ls: dict[str, Any]) -> list[str]:
             ),
         ]
 
+    if reason == "acao_fingida":
+        return [
+            (
+                "Quer que eu registre seu pedido agora para um especialista "
+                "do polo te atender por aqui?"
+            ),
+            (
+                "Posso registrar seu pedido para o especialista do polo. "
+                "Quer que eu faça isso?"
+            ),
+            (
+                "Me confirma se posso registrar seu pedido para o especialista "
+                "te chamar por aqui?"
+            ),
+        ]
+
+    if reason == "politica_inventada":
+        return [
+            (
+                "O contrato/informativo eu te mando por aqui no WhatsApp depois "
+                "dos seus dados. Quer que eu prepare?"
+            ),
+        ]
+
     # Residual genérico: só despedida segura (2ª regen deveria ter respondido).
     return [
         "Quando quiser retomar, é só me chamar aqui.",

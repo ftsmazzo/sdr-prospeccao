@@ -12,3 +12,7 @@ venv/
 dist/
 build/
 reports/
+
+static/fonts/
+static/_probe_contrato.pdf
+

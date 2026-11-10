@@ -27,8 +27,13 @@ from app.lead_state import (
 )
 from app.memory import ConversationMemory
 from app.messaging import split_whatsapp_messages
-from app.prompt_builder import build_system_prompt
+from app.prompt_builder import (
+    build_cached_system_message,
+    build_system_prompt_parts,
+)
 from app.schemas import (
+    RESPONDER_TOOL,
+    RESPONDER_TOOL_CHOICE,
     AgentResponse,
     looks_like_json,
     normalize_cpf,
@@ -58,7 +63,9 @@ from app.handoff_requests import (
 from app.offers import (
     contract_data_request_reply,
     detect_third_person_student,
+    infer_offer_from_reply,
     lead_affirms_offer,
+    lead_asks_if_registered,
     lead_refuses_offer,
     normalize_offer,
 )
@@ -329,24 +336,33 @@ class Orchestrator:
         }
 
     async def _call_agent_json(self, messages: list[dict]) -> AgentResponse:
-        raw = await self.llm.chat(messages, temperature=0.4)
+        raw = await self.llm.chat_tool(
+            messages,
+            tools=[RESPONDER_TOOL],
+            tool_choice=RESPONDER_TOOL_CHOICE,
+            temperature=0.4,
+        )
         parsed = parse_agent_response(raw)
         if parsed:
             return parsed
 
-        logger.warning("JSON inválido — retry bruto=%r", (raw or "")[:400])
+        logger.warning("JSON/tool inválido — retry bruto=%r", (raw or "")[:400])
         retry_messages = list(messages) + [
             {
                 "role": "system",
                 "content": (
-                    "Sua resposta anterior não era JSON válido. "
-                    "Responda SOMENTE o objeto JSON do schema "
-                    '(keys: reply, state_update, action, action_data, offer), '
-                    "sem markdown, sem texto fora do JSON."
+                    "A chamada anterior à ferramenta `responder` falhou ou veio inválida. "
+                    "Chame `responder` de novo com JSON válido "
+                    "(reply, state_update, action, action_data, offer)."
                 ),
             }
         ]
-        raw2 = await self.llm.chat(retry_messages, temperature=0.2)
+        raw2 = await self.llm.chat_tool(
+            retry_messages,
+            tools=[RESPONDER_TOOL],
+            tool_choice=RESPONDER_TOOL_CHOICE,
+            temperature=0.2,
+        )
         parsed2 = parse_agent_response(raw2)
         if parsed2:
             return parsed2
@@ -672,11 +688,12 @@ class Orchestrator:
 
     def _save_pending_offer(self, meta: dict, agent: AgentResponse) -> None:
         offer = normalize_offer(agent.offer.model_dump() if agent.offer else None)
+        if not offer:
+            offer = infer_offer_from_reply(agent.reply or "")
         if offer:
             offer["created_turn"] = int(meta.get("turn_count") or 0)
             meta["pending_offer"] = offer
             logger.info("pending_offer gravada type=%s", offer.get("type"))
-        # oferta só vive 1 turno de espera; se o modelo não ofereceu nada novo, não recria
 
     def _execute_pending_contrato(
         self, meta: dict, *, push_name: str = ""
@@ -1020,8 +1037,34 @@ class Orchestrator:
                 meta.pop("pending_offer", None)
                 pending = None
 
+        # "Vc registrou?" — resposta baseada no registro real, sem LLM se possível.
+        if (
+            not force_skip_finalize
+            and lead_asks_if_registered(user_text)
+            and not lead_affirms_offer(user_text)
+        ):
+            if meta.get("handoff_registrado"):
+                reply = (
+                    "Sim — seu pedido está registrado; o especialista do polo "
+                    "te chama por aqui."
+                )
+                force_skip_finalize = True
+            else:
+                meta["pending_offer"] = {
+                    "type": "encaminhamento",
+                    "motivo": meta.get("handoff_reason") or "especialista",
+                    "created_turn": int(meta.get("turn_count") or 0),
+                }
+                reply = (
+                    "Ainda não registrei. Quer que eu registre seu pedido agora "
+                    "para um especialista do polo te atender por aqui?"
+                )
+                force_skip_finalize = True
+                logger.info("reoffer encaminhamento após pergunta registrou phone=%s", phone)
+
         if not force_skip_finalize:
-            system = build_system_prompt(
+            facts_block = format_facts_block(facts_for_lead_state(ls))
+            fixed, variable = build_system_prompt_parts(
                 etapa=meta.get("etapa") or etapa_antes,
                 lead_state=ls,
                 meta_flags={
@@ -1032,15 +1075,14 @@ class Orchestrator:
                     "handoff_avisado": meta.get("handoff_avisado"),
                     "handoff_registrado": meta.get("handoff_registrado"),
                     "campos_recusados": meta.get("campos_recusados") or [],
+                    "matriculas": meta.get("matriculas") or [],
                 },
                 agent_name=self.settings.agent_name,
                 agent_gender=self.settings.agent_gender,
+                facts_block=facts_block or "",
             )
-            facts_block = format_facts_block(facts_for_lead_state(ls))
-            if facts_block:
-                system = f"{system}\n\n{facts_block}\n"
             history = self.memory.get_history(phone)
-            messages = [{"role": "system", "content": system}]
+            messages = [build_cached_system_message(fixed, variable)]
             if push_name and not history:
                 messages.append(
                     {

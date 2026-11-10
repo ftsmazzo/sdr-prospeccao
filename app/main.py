@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.9.1", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +66,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.9.0",
+        "version": "0.9.1",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
@@ -379,6 +379,8 @@ async def evolution_webhook_with_secret(path_secret: str, request: Request):
 
 @app.get("/checkout/{token}", response_class=HTMLResponse)
 def checkout_page(token: str):
+    from app.pricing import lookup_course_hours, price_for_course
+
     session = get_checkout(token)
     if not session:
         return HTMLResponse(
@@ -388,18 +390,33 @@ def checkout_page(token: str):
         )
 
     nome = session.lead_name or "você"
+    hours = lookup_course_hours(session.course_label)
+    band = price_for_course(session.course_label)
+    hours_html = f"{hours}h" if hours else "conforme catálogo"
+    if band:
+        valores_html = (
+            f"<li>Mensalidade: <strong>{band.monthly_label}</strong></li>"
+            f"<li>Total em 18x: <strong>{band.total_18_label}</strong></li>"
+            f"<li>À vista: <strong>{band.a_vista_label}</strong></li>"
+        )
+    else:
+        valores_html = f"<li>Mensalidade: <strong>{session.amount_label}</strong></li>"
+
     if session.confirmed:
         body = (
+            f"<p class='brand'>Faveni Polo Catanduva</p>"
             f"<h1>Matrícula registrada — demonstração</h1>"
             f"<p>Obrigado, {nome}. Pagamento simulado confirmado para "
             f"<strong>{session.course_label}</strong>.</p>"
         )
     else:
         body = f"""
-        <h1>Matrícula Faveni — pagamento simulado</h1>
+        <p class="brand">Faveni Polo Catanduva</p>
+        <h1>Matrícula — pagamento simulado</h1>
         <p>Olá, {nome}.</p>
         <p><strong>Curso:</strong> {session.course_label}</p>
-        <p><strong>Mensalidade:</strong> {session.amount_label}</p>
+        <p><strong>Carga horária:</strong> {hours_html}</p>
+        <ul style="padding-left:1.2rem;line-height:1.6">{valores_html}</ul>
         <p style="color:#444;font-size:0.95rem">
           Documentos complementares (RG/CNH, diploma ou declaração, histórico)
           podem ser entregues <strong>depois</strong> desta confirmação.
@@ -422,6 +439,8 @@ def checkout_page(token: str):
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Matrícula Faveni — pagamento simulado</title>
+  <style>.brand{{font-size:0.85rem;letter-spacing:0.04em;text-transform:uppercase;
+  color:#0b6e4f;margin:0 0 0.5rem}}</style>
 </head>
 <body style="font-family:Georgia,serif;background:#f7f4ef;color:#1c1c1c;margin:0">
   <main style="max-width:32rem;margin:0 auto;padding:2.5rem 1.25rem">{body}</main>

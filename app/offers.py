@@ -64,6 +64,62 @@ def normalize_offer(raw: Any) -> dict[str, Any] | None:
     return out
 
 
+_OFFER_CONTRATO_RE = re.compile(
+    r"(?i)\b("
+    r"(?:quero|posso|quer)\s+(?:que\s+(?:eu\s+)?)?(?:enviar|mandar|gerar|preparar)"
+    r"\s+(?:o\s+)?contrato"
+    r"|envi(?:ar|e|o)\s+(?:o\s+)?contrato"
+    r"|gerar\s+(?:o\s+)?contrato"
+    r"|manda(?:r)?\s+(?:o\s+)?contrato"
+    r")\b"
+)
+_OFFER_HANDOFF_RE = re.compile(
+    r"(?i)\b("
+    r"(?:quero|posso|quer)\s+(?:que\s+(?:eu\s+)?)?(?:registrar|anotar|encaminhar)"
+    r"|registrar?\s+(?:seu|o)\s+pedido"
+    r"|encaminhar\s+(?:para\s+)?(?:um\s+)?especialista"
+    r"|especialista\s+(?:do\s+polo\s+)?(?:te\s+)?(?:ajuda|fala|chama)"
+    r"|quer\s+que\s+eu\s+registre"
+    r")\b"
+)
+_OFFER_RESUMO_RE = re.compile(
+    r"(?i)\b("
+    r"(?:quero|posso|quer)\s+(?:que\s+(?:eu\s+)?)?(?:te\s+)?(?:mandar|enviar|passar)\s+"
+    r"(?:um\s+)?resumo"
+    r"|te\s+mando\s+(?:um\s+)?resumo"
+    r"|mandar\s+(?:um\s+)?resumo"
+    r"|quer\s+(?:um\s+)?resumo"
+    r")\b"
+)
+
+
+def infer_offer_from_reply(reply: str) -> dict[str, Any] | None:
+    """Se a reply oferece algo executável e o modelo omitiu offer."""
+    text = reply or ""
+    if _OFFER_CONTRATO_RE.search(text):
+        return {"type": "contrato"}
+    if _OFFER_HANDOFF_RE.search(text):
+        return {"type": "encaminhamento", "motivo": "especialista"}
+    if _OFFER_RESUMO_RE.search(text):
+        return {"type": "resumo"}
+    return None
+
+
+_ASKS_REGISTERED_RE = re.compile(
+    r"(?i)\b("
+    r"(?:voc[eê]|vc)\s+registrou"
+    r"|registrou\s*\?"
+    r"|j[aá]\s+registrou"
+    r"|foi\s+registrado"
+    r"|anotou\s*\?"
+    r")\b"
+)
+
+
+def lead_asks_if_registered(text: str) -> bool:
+    return bool(_ASKS_REGISTERED_RE.search(text or ""))
+
+
 def contract_data_request_reply(meta: dict[str, Any], ls: dict[str, Any]) -> str:
     """Pede só o que falta para gerar o contrato."""
     third = bool(ls.get("aluno_e_terceiro"))

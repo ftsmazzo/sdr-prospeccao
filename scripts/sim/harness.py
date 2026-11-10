@@ -87,6 +87,8 @@ async def run_persona(
     judge_model: str,
     agent_model: str,
     max_turns: int = 16,
+    abort_on_json_fallback: bool = False,
+    max_json_fallbacks: int = 3,
 ) -> dict[str, Any]:
     phone = f"sim:{persona['id']}"
     evo = MockEvolution()
@@ -113,6 +115,8 @@ async def run_persona(
     lead_refused_objetivo = False
     asked_objetivo_after_refuse_count = 0
     turn_latencies_ms: list[float] = []
+    json_fallback_streak = 0
+    json_fallback_aborted = False
 
     # limpa memória residual do phone
     orch.memory.clear(phone)
@@ -196,6 +200,19 @@ async def run_persona(
         agent_text = sent or (reply or "")
 
         diag = dict(getattr(orch, "last_reply_diag", None) or {})
+        # Fallback JSON/tool: reply neutra típica ou stock após parse falho.
+        from app.schemas import NEUTRAL_REPLY
+
+        if (agent_text or "").strip() == NEUTRAL_REPLY or diag.get("json_fallback"):
+            json_fallback_streak += 1
+        else:
+            json_fallback_streak = 0
+        if abort_on_json_fallback and json_fallback_streak >= max_json_fallbacks:
+            json_fallback_aborted = True
+            outcome = "json_fallback_abort"
+            history.append({"role": "agent", "turno": turn, "text": agent_text})
+            break
+
         if diag.get("regen"):
             regens.append(
                 {
@@ -320,6 +337,8 @@ async def run_persona(
             "avg_latency_ms": (
                 sum(turn_latencies_ms) / len(turn_latencies_ms) if turn_latencies_ms else 0.0
             ),
+            "json_fallback_aborted": json_fallback_aborted,
+            "json_fallback_streak": json_fallback_streak,
         },
         "judge": judge,
         "scheduler_log": list(sched.log),
