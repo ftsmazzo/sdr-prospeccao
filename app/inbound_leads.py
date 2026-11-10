@@ -88,7 +88,19 @@ def create_or_update_lead(
     meta["etapa"] = "primeiro_contato"
     ls["nome"] = payload["nome"]
     if payload.get("interesse"):
-        ls["area_interesse"] = payload["interesse"]
+        interesse = str(payload["interesse"]).strip()
+        ls["area_interesse"] = interesse
+        # Se escolheu curso do catálogo, já ancora a recomendação.
+        try:
+            from app.course_facts import resolve_catalog_name
+
+            canonical = resolve_catalog_name(interesse)
+            if canonical:
+                ls["curso_recomendado"] = canonical
+                if not ls.get("curso_escolhido"):
+                    ls["curso_escolhido"] = canonical
+        except Exception:  # noqa: BLE001
+            pass
     if payload.get("graduacao"):
         ls["graduacao"] = payload["graduacao"]
     meta["lead_state"] = ls

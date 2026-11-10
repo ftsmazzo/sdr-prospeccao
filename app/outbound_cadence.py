@@ -207,15 +207,45 @@ async def compose_active_message(
     first = str(nome).split()[0] if nome else ""
     agent = settings.agent_name or "Clara"
 
+    graduacao = str(ls.get("graduacao") or "").strip().casefold()
+
+    def _primeiro_contato_fallback() -> str:
+        greet = f"Oi{', ' + first if first else ''}! "
+        base = (
+            f"{greet}Sou a {agent}, do Polo Faveni Catanduva. "
+            f"Vi pelo {origem} seu interesse na pós em {interesse}. "
+        )
+        if graduacao == "concluida":
+            return (
+                base
+                + "Vi que você já concluiu a graduação — ótimo. "
+                "Qual seu principal objetivo com essa especialização: "
+                "atuar na área, crescer no trabalho atual ou mudar de carreira?"
+            )
+        if graduacao == "cursando":
+            return (
+                base
+                + "Vi que você ainda está na graduação. A pós exige diploma "
+                "ou declaração de conclusão — quer que eu te oriente no que dá "
+                "para preparar agora, ou prefere falar quando estiver concluindo?"
+            )
+        if graduacao in ("nao_tem", "nao", "não"):
+            return (
+                base
+                + "Vi que você ainda não tem graduação. A pós vem depois da "
+                "faculdade — posso te ajudar a entender o caminho até lá, "
+                "ou tem alguma dúvida específica sobre a área?"
+            )
+        return (
+            base
+            + "Para eu te orientar certinho na matrícula: você já concluiu "
+            "a graduação?"
+        )
+
     # Fallback sem LLM (testes / falha de API)
     def _fallback() -> str:
         if jtype == "primeiro_contato":
-            greet = f"Oi{', ' + first if first else ''}! "
-            return (
-                f"{greet}Sou a {agent}, do Polo Faveni Catanduva. "
-                f"Vi seu interesse na pós em {interesse} pelo {origem}. "
-                "Você já concluiu a graduação e quer seguir com essa especialização?"
-            )
+            return _primeiro_contato_fallback()
         curso = ls.get("curso_escolhido") or ls.get("curso_recomendado") or interesse
         etapa = meta.get("etapa") or ""
         step = int(job.get("step") or 0)
@@ -258,14 +288,40 @@ async def compose_active_message(
             if isinstance(e, dict)
         ) or "(nenhum envio ativo anterior)"
         if jtype == "primeiro_contato":
+            if graduacao == "concluida":
+                ask_rule = (
+                    "A graduação JÁ CONSTA como concluída no formulário — "
+                    "NÃO pergunte se concluiu. Agradeça/reconheça isso em 1 frase "
+                    "e faça UMA pergunta sobre objetivo com a especialização "
+                    "(atuar na área, crescer no emprego, mudar de carreira)."
+                )
+            elif graduacao == "cursando":
+                ask_rule = (
+                    "No formulário a pessoa ainda está CURSANDO a graduação — "
+                    "NÃO pergunte se já concluiu. Reconheça isso e explique "
+                    "em 1 frase que a pós exige diploma/declaração; pergunte se "
+                    "quer orientação agora ou quando estiver concluindo."
+                )
+            elif graduacao in ("nao_tem", "nao", "não"):
+                ask_rule = (
+                    "No formulário a pessoa AINDA NÃO TEM graduação — "
+                    "NÃO ofereça matrícula de pós agora. Reconheça o interesse "
+                    "e pergunte se quer entender o caminho até a pós ou tirar "
+                    "dúvida da área."
+                )
+            else:
+                ask_rule = (
+                    "Graduação desconhecida: faça UMA pergunta se já concluiu "
+                    "a graduação (necessária para a pós)."
+                )
             system = (
                 f"Você é {agent}, consultora de matrículas do Polo Faveni Catanduva. "
-                "Escreva a PRIMEIRA mensagem de prospecção de PÓS-GRADUAÇÃO EAD: "
-                "apresente-se, diga que viu o interesse na pós/área "
-                f"({interesse}) pelo {origem}, e faça UMA pergunta de funil "
-                "(graduação concluída? objetivo com a especialização?). "
-                "Deixe claro que o assunto é matrícula na pós — NÃO inicie bate-papo "
-                "temático genérico. Sem preço, sem lista de cursos. Só o texto."
+                "Escreva a PRIMEIRA mensagem de WhatsApp (tom humano, curto, natural — "
+                "não robotizado, sem 'estou à disposição' genérico). "
+                f"Apresente-se, diga que viu o interesse em {interesse} pelo {origem}. "
+                f"{ask_rule} "
+                "Assunto = matrícula/orientação de pós EAD. Sem preço, sem lista de cursos. "
+                "Só o texto da mensagem."
             )
         else:
             system = (
@@ -285,9 +341,11 @@ async def compose_active_message(
             f"comercial_retorno: {bool(meta.get('comercial_retorno'))}\n"
             f"Briefing: {briefing or '(vazio)'}\n"
             f"Curso/interesse: {interesse}\n"
+            f"graduacao_conhecida: {graduacao or '(não informada)'}\n"
             f"Envios ativos anteriores: {enviados}\n"
             f"Lead_state: graduacao={ls.get('graduacao')} "
-            f"curso={ls.get('curso_escolhido')} objecao={ls.get('objecao_ativa')}"
+            f"curso={ls.get('curso_escolhido')} objecao={ls.get('objecao_ativa')}\n"
+            "Nunca pergunte de novo o que já está em graduacao_conhecida."
         )
         text = await llm.chat(
             [
