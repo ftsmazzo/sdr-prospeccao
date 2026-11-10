@@ -98,7 +98,7 @@ def write_reports(
             score_i = int(score)
         except (TypeError, ValueError):
             score_i = 0
-        mark = " ⚠️" if score_i < 4 else ""
+        mark = " [baixa]" if score_i < 4 else ""
         lines.append(f"### `{r.get('persona_id')}` — veracidade={score}{mark}")
         lines.append(f"> {just or '_sem justificativa_'}")
         lines.append("")
