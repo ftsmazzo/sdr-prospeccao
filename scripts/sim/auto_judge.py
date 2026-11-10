@@ -129,21 +129,26 @@ def _catalog_name_matches(raw: str, catalog_names: list[str]) -> bool:
     nr = _normalize(raw)
     if not nr or len(nr) < 3:
         return False
+    first_raw = nr.split()[0]
     for name in catalog_names:
         kn = _normalize(name)
         if not kn:
             continue
         if nr == kn or nr in kn or kn in nr:
             return True
-        # tokens significativos (≥4 chars), exige ≥2 em comum na ordem razoável
+        first_cat = kn.split()[0]
+        # Prefixo do catálogo: "Psicopedagogia …" ou "TEA tem carga…"
+        if first_raw == first_cat and len(first_cat) >= 3:
+            if len(first_cat) >= 8 or kn.startswith(first_raw + " "):
+                return True
+        # tokens significativos (≥4 chars), exige ≥2 em comum
         raw_toks = [t for t in nr.split() if len(t) >= 4]
         cat_toks = [t for t in kn.split() if len(t) >= 4]
         if len(raw_toks) >= 2 and len(cat_toks) >= 2:
-            if all(any(rt == ct or rt in ct or ct in rt for ct in cat_toks) for rt in raw_toks[:3]):
+            # só os tokens que também existem no catálogo contam
+            overlap = [rt for rt in raw_toks if any(rt == ct or rt in ct or ct in rt for ct in cat_toks)]
+            if len(overlap) >= 2 or (len(overlap) >= 1 and len(first_cat) >= 8 and first_raw == first_cat):
                 return True
-        # TEA / siglas curtas no início do nome do catálogo
-        if len(nr) <= 5 and kn.startswith(nr + " "):
-            return True
     return False
 
 

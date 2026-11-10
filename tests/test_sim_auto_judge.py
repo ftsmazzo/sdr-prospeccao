@@ -103,8 +103,10 @@ def test_todos_cursos_catalogo_ok():
 def test_tea_e_psicopedagogia_no_catalogo():
     for reply in (
         "A pós em Psicopedagogia Institucional e Clínica tem 620h.",
+        "Psicopedagogia é uma área muito interessante. Quer saber a mensalidade?",
         "Temos TEA – Transtorno do Espectro Autista (740h).",
         "A especialização em TEA - Transtorno do Espectro Autista é 740h.",
+        "TEA tem carga horária de 740h e a mensalidade é R$ 79,90.",
     ):
         v = judge_agent_reply(reply, turno=2, aceite_matricula=False, action_executed=False)
         assert not any(x["regra"] == "curso_fora_catalogo" for x in v), reply
