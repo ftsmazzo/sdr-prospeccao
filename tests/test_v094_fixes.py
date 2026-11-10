@@ -88,6 +88,22 @@ def test_strip_maria_vocative_from_spoken():
     # Se o lead for Maria, mantém
     keep = strip_wrong_person_vocatives(spoken, allowed_names={"maria", "frederico"})
     assert "Maria" in keep
+    # Mariana não pode ser cortada como Maria
+    mariana = "Ah, Mariana, faz sentido pagar no cartão."
+    kept_m = strip_wrong_person_vocatives(mariana, allowed_names={"mariana"})
+    assert "Mariana" in kept_m
+    assert not spoken_has_foreign_person_name(mariana, allowed_names={"mariana"})
+
+
+def test_birth_date_needs_context_or_cpf_block():
+    loose = extract_contract_fields_from_text("quero até 15/03/2026 pra começar")
+    assert "birth_date" not in loose
+    stacked = extract_contract_fields_from_text(
+        "Frederico Mazzo\n529.982.247-25\n12/03/1990"
+    )
+    assert stacked.get("birth_date") == "12/03/1990"
+    labeled = extract_contract_fields_from_text("nascimento: 01/05/1985")
+    assert labeled.get("birth_date") == "01/05/1985"
 
 
 def test_contract_grammar_seu_sua():

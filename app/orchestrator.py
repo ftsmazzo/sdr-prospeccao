@@ -891,13 +891,20 @@ class Orchestrator:
             )
             if delivery:
                 return reply, scheduled_course or course_out, True
-        if not missing_contract_fields(meta, ls):
-            # Sem phone (teste unitário) mas dados completos — não pedir de novo.
+        # Dados pessoais ok mas sem curso (ou sem phone): não prometer entrega.
+        if not missing_contract_fields(meta, ls) and not course_out:
+            reply = (
+                "Perfeito, recebi seus dados. Qual curso você quer seguir "
+                "pra eu preparar o contrato?"
+            )
+            return reply, None, False
+        if not missing_contract_fields(meta, ls) and not phone:
+            # Teste unitário sem phone — não agenda, não promete job.
             reply = (
                 "Perfeito — com seus dados eu já estou preparando o contrato "
                 "e te mando por aqui em alguns minutinhos, junto com o próximo passo."
             )
-            return reply, course_out, bool(phone)
+            return reply, course_out, False
         reply = contract_data_request_reply(meta, ls)
         return reply, course_out, False
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
 from app.schemas import normalize_cpf
@@ -10,10 +11,11 @@ from app.schemas import normalize_cpf
 _CPF_RE = re.compile(
     r"(?i)(?:\bcpf\b\s*[:.]?\s*)?(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b"
 )
-_BIRTH_RE = re.compile(
-    r"(?i)(?:\b(?:nasc(?:imento)?|data(?:\s+de\s+nasc(?:imento)?)?)\b\s*[:.]?\s*)?"
+_BIRTH_LABELED_RE = re.compile(
+    r"(?i)\b(?:nasc(?:imento)?|data(?:\s+de\s+nasc(?:imento)?)?)\b\s*[:.]?\s*"
     r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b"
 )
+_DATE_ONLY_RE = re.compile(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b")
 # Nome: linha/"nome:" + 2–5 palavras capitalizadas ou título simples
 _NAME_LABELED_RE = re.compile(
     r"(?i)\bnome(?:\s+completo)?\s*[:\-]\s*([A-Za-zÁ-ú][A-Za-zÁ-ú'\-]+"
@@ -24,14 +26,32 @@ _NAME_LINE_RE = re.compile(
 )
 
 
-def _norm_birth(raw: str) -> str:
+def _norm_birth(raw: str) -> str | None:
     parts = re.split(r"[/-]", raw.strip())
     if len(parts) != 3:
-        return raw.strip()
-    d, m, y = parts
-    if len(y) == 2:
-        y = ("20" + y) if int(y) < 50 else ("19" + y)
-    return f"{int(d):02d}/{int(m):02d}/{y}"
+        return None
+    try:
+        d, m, y = (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return None
+    if y < 100:
+        y = (2000 + y) if y < 50 else (1900 + y)
+    if not (1 <= d <= 31 and 1 <= m <= 12):
+        return None
+    # Idade plausível para matrícula (15–90 anos, ano corrente ~2026).
+    from datetime import date
+
+    today = date.today()
+    try:
+        born = date(y, m, d)
+    except ValueError:
+        return None
+    age = today.year - born.year - (
+        (today.month, today.day) < (born.month, born.day)
+    )
+    if age < 15 or age > 90:
+        return None
+    return f"{d:02d}/{m:02d}/{y}"
 
 
 def extract_contract_fields_from_text(text: str) -> dict[str, str]:
@@ -45,9 +65,18 @@ def extract_contract_fields_from_text(text: str) -> dict[str, str]:
         if cpf:
             out["cpf"] = cpf
 
-    m_birth = _BIRTH_RE.search(raw)
+    m_birth = _BIRTH_LABELED_RE.search(raw)
     if m_birth:
-        out["birth_date"] = _norm_birth(m_birth.group(1))
+        norm = _norm_birth(m_birth.group(1))
+        if norm:
+            out["birth_date"] = norm
+    elif out.get("cpf"):
+        # Sem rótulo: só aceita data empilhada com CPF (bloco de dados do contrato).
+        for m_date in _DATE_ONLY_RE.finditer(raw):
+            norm = _norm_birth(m_date.group(1))
+            if norm:
+                out["birth_date"] = norm
+                break
 
     m_name = _NAME_LABELED_RE.search(raw)
     if m_name:
@@ -57,7 +86,7 @@ def extract_contract_fields_from_text(text: str) -> dict[str, str]:
         if out.get("cpf") or out.get("birth_date"):
             for line in raw.splitlines():
                 line = line.strip()
-                if not line or _CPF_RE.search(line) or _BIRTH_RE.search(line):
+                if not line or _CPF_RE.search(line) or _DATE_ONLY_RE.search(line):
                     continue
                 if re.search(r"(?i)\b(cpf|nasc|data)\b", line):
                     continue

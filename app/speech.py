@@ -208,10 +208,13 @@ _EXAMPLE_PERSON_NAMES = frozenset(
     }
 )
 
+# Nomes longos primeiro (Mariana antes de Maria) para não truncar o token.
 _VOCATIVE_RE = re.compile(
     r"(?i)(?:^|(?<=[\s\[\]\.\!\?]))"
     r"(?:(?:ah|oi|ol[aá]|eita|n[eé]|olha),?\s+)?"
-    r"(?P<name>Maria|Jo[aã]o|Jos[eé]|Ana|Carlos|Pedro|Paulo|Lucas|Mariana|Fernanda|Roberto)"
+    r"(?P<name>Mariana|Fernanda|Roberto|Carlos|Pedro|Paulo|Lucas|"
+    r"Maria|Jo[aã]o|Jos[eé]|Ana)"
+    r"(?=\b|,|\s|$)"
     r",?\s*"
 )
 
