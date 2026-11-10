@@ -279,15 +279,6 @@ def contract_data_request_reply(meta: dict[str, Any], ls: dict[str, Any]) -> str
 
 
 def missing_contract_fields(meta: dict[str, Any], ls: dict[str, Any]) -> list[str]:
-    missing: list[str] = []
-    # Para terceiro, nome do aluno pode estar em aluno_nome; full_name/meta.nome é comprador
-    if ls.get("aluno_e_terceiro"):
-        if not (ls.get("aluno_nome") or meta.get("full_name")):
-            missing.append("nome completo")
-    elif not (meta.get("full_name") or ls.get("nome")):
-        missing.append("nome completo")
-    if not meta.get("cpf"):
-        missing.append("CPF")
-    if not meta.get("birth_date"):
-        missing.append("data de nascimento")
-    return missing
+    from app.contract_party import missing_party_fields
+
+    return missing_party_fields(meta, ls)

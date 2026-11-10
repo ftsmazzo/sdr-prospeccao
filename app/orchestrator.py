@@ -67,6 +67,7 @@ from app.compra_atual import (
     ensure_compra_atual,
     sync_ls_into_compra_atual,
 )
+from app.contract_party import resolve_contract_party
 from app.lead_data import (
     apply_extracted_contract_fields,
     extract_contract_fields_from_text,
@@ -619,10 +620,13 @@ class Orchestrator:
             cpf = normalize_cpf(str(data.get("cpf") or ""))
             birth = str(data.get("birth_date") or "").strip()
             if full_name and cpf and birth:
-                meta["full_name"] = full_name
-                meta["cpf"] = cpf
-                meta["birth_date"] = birth
-                ls["nome"] = full_name
+                from app.lead_data import apply_extracted_contract_fields
+
+                apply_extracted_contract_fields(
+                    meta,
+                    ls,
+                    {"full_name": full_name, "cpf": cpf, "birth_date": birth},
+                )
             else:
                 logger.warning("LEAD_DATA incompleto/CPF inválido phone=%s", phone)
 
@@ -631,21 +635,41 @@ class Orchestrator:
                 ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni"
             ).strip()
             course = resolve_catalog_name(raw_course) or raw_course
-            full_name = str(data.get("full_name") or meta.get("full_name") or ls.get("nome") or "").strip()
-            cpf = normalize_cpf(str(data.get("cpf") or meta.get("cpf") or ""))
-            birth = str(data.get("birth_date") or meta.get("birth_date") or "").strip()
-            if not (full_name and cpf and birth):
+            # Se action_data trouxe dados, grava no party correto antes de resolver.
+            ad_name = str(data.get("full_name") or "").strip()
+            ad_cpf = normalize_cpf(str(data.get("cpf") or "")) or ""
+            ad_birth = str(data.get("birth_date") or "").strip()
+            if ad_name or ad_cpf or ad_birth:
+                from app.lead_data import apply_extracted_contract_fields
+
+                apply_extracted_contract_fields(
+                    meta,
+                    ls,
+                    {
+                        k: v
+                        for k, v in {
+                            "full_name": ad_name,
+                            "cpf": ad_cpf,
+                            "birth_date": ad_birth,
+                        }.items()
+                        if v
+                    },
+                )
+            party = resolve_contract_party(meta, ls, push_name=push_name)
+            aluno = party["aluno_nome"]
+            comprador = party["comprador_nome"] or push_name
+            cpf = party["cpf"]
+            birth = party["birth_date"]
+            if not (aluno and cpf and birth):
                 logger.warning("FOLLOWUP_DOC sem dados phone=%s", phone)
                 reply = contract_data_request_reply(meta, ls)
             else:
-                meta["full_name"] = full_name
-                meta["cpf"] = cpf
-                meta["birth_date"] = birth
-                ls["nome"] = full_name
                 ls["curso_escolhido"] = course
                 get_scheduler().schedule_document(
                     phone=phone,
-                    lead_name=full_name,
+                    lead_name=aluno,
+                    aluno_nome=aluno,
+                    comprador_nome=comprador,
                     cpf=cpf,
                     birth_date=birth,
                     course=course,
@@ -654,11 +678,17 @@ class Orchestrator:
                 meta["pending_contract"] = True
                 meta["course"] = course
                 delivery_ran = True
-                logger.info("FOLLOWUP_DOC agendado phone=%s course=%s", phone, course)
+                logger.info(
+                    "FOLLOWUP_DOC agendado phone=%s course=%s aluno=%s",
+                    phone,
+                    course,
+                    aluno,
+                )
 
         elif action == "CHECKOUT_READY":
             course = str(ls.get("curso_escolhido") or data.get("course") or "Pós-Graduação EAD Faveni").strip()
-            name = meta.get("full_name") or ls.get("nome") or push_name
+            party = resolve_contract_party(meta, ls, push_name=push_name)
+            name = party["aluno_nome"] or push_name
             session = create_checkout(phone, course_label=course, lead_name=name or "")
             link = f"{self.settings.public_base_url.rstrip('/')}/checkout/{session.token}"
             reply = (
@@ -825,7 +855,7 @@ class Orchestrator:
         *,
         push_name: str = "",
     ) -> tuple[str, str | None, bool]:
-        """Agenda FOLLOWUP_DOC se curso + 3 dados estiverem prontos."""
+        """Agenda FOLLOWUP_DOC se curso + 3 dados do ALUNO estiverem prontos."""
         ls = ensure_lead_state(meta)
         if missing_contract_fields(meta, ls):
             return "", None, False
@@ -838,20 +868,18 @@ class Orchestrator:
             or ""
         ).strip()
         course = resolve_catalog_name(raw_course) or raw_course
-        full_name = str(
-            meta.get("full_name")
-            or ls.get("aluno_nome")
-            or ls.get("nome")
-            or push_name
-            or ""
-        ).strip()
-        cpf = str(meta.get("cpf") or "")
-        birth = str(meta.get("birth_date") or "")
-        if not (phone and full_name and cpf and birth and course):
+        party = resolve_contract_party(meta, ls, push_name=push_name)
+        aluno = party["aluno_nome"]
+        comprador = party["comprador_nome"] or push_name
+        cpf = party["cpf"]
+        birth = party["birth_date"]
+        if not (phone and aluno and cpf and birth and course):
             return "", None, False
         get_scheduler().schedule_document(
             phone=phone,
-            lead_name=full_name,
+            lead_name=aluno,
+            aluno_nome=aluno,
+            comprador_nome=comprador,
             cpf=cpf,
             birth_date=birth,
             course=course,
@@ -859,15 +887,48 @@ class Orchestrator:
         )
         meta["pending_contract"] = True
         meta["course"] = course
-        meta["full_name"] = full_name
+        # full_name no meta = comprador (não sobrescrever com aluno em 3ª pessoa)
+        if party["third"] != "1":
+            meta["full_name"] = aluno
         if course:
             ls["curso_escolhido"] = course
+        if party["third"] == "1":
+            ls["aluno_nome"] = aluno
         meta["lead_state"] = ls
-        reply = (
-            "Perfeito — com seus dados eu já estou preparando o contrato "
-            "e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+        if party["third"] == "1" and aluno:
+            reply = (
+                f"Perfeito — com os dados de {aluno} eu já estou preparando o contrato "
+                "dela/dele e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+            )
+            # Gênero resolvido evita "dela/dele"
+            gen = (ls.get("aluno_genero") or "").casefold()
+            if gen == "f":
+                reply = (
+                    f"Perfeito — com os dados de {aluno} eu já estou preparando o contrato "
+                    "dela e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+                )
+            elif gen == "m":
+                reply = (
+                    f"Perfeito — com os dados de {aluno} eu já estou preparando o contrato "
+                    "dele e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+                )
+            else:
+                reply = (
+                    f"Perfeito — com os dados de {aluno} eu já estou preparando o contrato "
+                    "e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+                )
+        else:
+            reply = (
+                "Perfeito — com seus dados eu já estou preparando o contrato "
+                "e te mando por aqui em alguns minutinhos, junto com o próximo passo."
+            )
+        logger.info(
+            "contrato agendado phone=%s course=%s aluno=%s comprador=%s",
+            phone,
+            course,
+            aluno,
+            comprador,
         )
-        logger.info("contrato agendado (dados completos) phone=%s course=%s", phone, course)
         return reply, course, True
 
     def _execute_pending_contrato(
@@ -1157,6 +1218,41 @@ class Orchestrator:
             return ""
 
         meta = self.memory.get_meta(phone)
+        # Qualquer resposta cancela retomadas/primeiro_contato pendentes.
+        try:
+            from app.outbound_cadence import cancel_retomadas
+
+            n_cancel = cancel_retomadas(phone, get_scheduler())
+            if n_cancel:
+                meta["proxima_retomada_at"] = None
+                logger.info("retomadas canceladas phone=%s n=%s", phone, n_cancel)
+        except Exception:  # noqa: BLE001
+            logger.exception("falha ao cancelar retomadas phone=%s", phone)
+
+        # Opt-out explícito
+        if re.search(
+            r"(?i)\b("
+            r"n[aã]o\s+tenho\s+interesse|n[aã]o\s+pedi\s+(?:isso|contato)|"
+            r"para\s+de\s+(?:me\s+)?(?:mandar|enviar)|stop\b|opt[\s\-]?out|"
+            r"n[aã]o\s+quero\s+(?:mais\s+)?(?:receber|mensagem)"
+            r")\b",
+            user_text or "",
+        ):
+            meta["opt_out"] = True
+            meta["retomadas_paused"] = True
+            ls_opt = ensure_lead_state(meta)
+            reply = (
+                f"Desculpa o incômodo"
+                + (f", {(ls_opt.get('nome') or push_name or '').split()[0]}" if (ls_opt.get("nome") or push_name) else "")
+                + ". Não vou mais te enviar mensagens por aqui. "
+                "Se mudar de ideia, é só me chamar."
+            )
+            self.memory.set_meta(phone, meta)
+            self.memory.append(phone, "user", user_text)
+            self.memory.append(phone, "assistant", reply)
+            await self.evo.send_text(phone, reply, delay_ms=0)
+            return reply
+
         ls = ensure_lead_state(meta)
         if push_name and not ls.get("nome"):
             # não assume nome legal; só contexto
@@ -1505,6 +1601,54 @@ class Orchestrator:
                 "stock_text": None,
                 "pending_offer_executed": True,
             }
+
+        # Agenda retomada real quando lead pede tempo / "me chama…".
+        ls_now = meta.get("lead_state") or {}
+        wants_callback = bool(
+            ls_now.get("objecao_ativa") == "vou_pensar"
+            or re.search(
+                r"(?i)\b("
+                r"me\s+chama|me\s+liga|semana\s+que\s+vem|"
+                r"depois\s+de\s+amanh[aã]|vou\s+pensar|me\s+cobra"
+                r")\b",
+                user_text or "",
+            )
+        )
+        if wants_callback and not meta.get("opt_out"):
+            try:
+                from app.outbound_cadence import schedule_think_followup
+
+                delay = schedule_think_followup(
+                    phone, meta, get_scheduler(), user_text=user_text
+                )
+                meta["_retomada_agendada"] = True
+                if blocked_promise_reason == "promessa_lembrete":
+                    blocked_promise_reason = None
+                if not re.search(r"(?i)\b(agend|retorno|te\s+chamo|volto)\b", reply or ""):
+                    when = (
+                        "em alguns minutinhos (modo demo)"
+                        if getattr(self.settings, "demo_fast_followup", False)
+                        else f"em cerca de {max(1, int(delay // 3600))}h"
+                        if delay >= 3600
+                        else "no prazo combinado"
+                    )
+                    reply = (
+                        (reply or "").rstrip()
+                        + f"\n\nCombinado — te chamo de novo {when}."
+                    ).strip()
+                logger.info("retomada agendada phone=%s delay=%ss", phone, int(delay))
+            except Exception:  # noqa: BLE001
+                logger.exception("falha ao agendar retomada phone=%s", phone)
+        elif not meta.get("opt_out") and not meta.get("pending_contract"):
+            # Reagenda silêncio do funil (qualquer reply cancela as anteriores).
+            try:
+                from app.outbound_cadence import schedule_silence_followups
+
+                schedule_silence_followups(
+                    phone, meta, get_scheduler(), settings=self.settings
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("falha ao agendar silence followups phone=%s", phone)
 
         self.memory.set_meta(phone, meta)
 

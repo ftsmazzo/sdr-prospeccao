@@ -71,13 +71,20 @@ def build_matricula_notify_message(
     lead_nome: str | None,
     lead_phone: str,
     curso: str | None,
+    aluno_nome: str | None = None,
+    comprador_nome: str | None = None,
 ) -> str:
-    nome = (lead_nome or "Lead").strip() or "Lead"
-    curso_l = (curso or "curso").strip()
     phone = re.sub(r"\D", "", lead_phone or "") or lead_phone
+    curso_l = (curso or "curso").strip()
+    aluno = (aluno_nome or lead_nome or "Aluno").strip() or "Aluno"
+    comprador = (comprador_nome or lead_nome or "").strip()
+    if comprador and aluno.casefold() != comprador.casefold():
+        who = f"Aluno: {aluno} — compra feita por {comprador} ({phone})"
+    else:
+        who = f"Lead: {aluno} ({phone})"
     return (
         f"Matrícula confirmada — {agent_name}\n"
-        f"Lead: {nome} ({phone})\n"
+        f"{who}\n"
         f"Curso: {curso_l}"
     )
 

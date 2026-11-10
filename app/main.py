@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.followups import followup_worker
 from app.inbound_buffer import get_inbound_buffer, inbound_worker
 from app.orchestrator import Orchestrator
+from app.web_fase4 import register_fase4_routes
 from app.webhook_parse import parse_incoming
 
 logging.basicConfig(level=logging.INFO)
@@ -53,7 +54,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Edu SDR", version="0.9.4", lifespan=lifespan)
+app = FastAPI(title="Edu SDR", version="0.10.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
@@ -66,7 +67,7 @@ def health():
     return {
         "ok": True,
         "service": "edu-sdr",
-        "version": "0.9.4",
+        "version": "0.10.0",
         "agent_name": settings.agent_name,
         "agent_gender": settings.agent_gender,
         "openrouter": bool(settings.openrouter_api_key),
@@ -78,13 +79,21 @@ def health():
         "handoff_max_objecoes": settings.handoff_max_objecoes,
         "briefing_model": settings.briefing_model,
         "prompt_history_messages": settings.prompt_history_messages,
+        "demo_fast_followup": bool(settings.demo_fast_followup),
+        "active_send_daily_limit": settings.active_send_daily_limit,
         "redis": bool(settings.redis_url),
+        "tag": "demo-v3",
     }
 
 
 def _admin_authorized(request: Request) -> bool:
     settings = get_settings()
-    provided = request.headers.get("X-Admin-Secret") or ""
+    provided = (
+        request.headers.get("X-Admin-Secret")
+        or request.cookies.get("edu_admin_secret")
+        or request.query_params.get("secret")
+        or ""
+    )
     expected = settings.webhook_secret or ""
     if not expected or not provided:
         return False
@@ -601,7 +610,18 @@ async def checkout_confirm(token: str):
         ls = ensure_lead_state(meta)
         meta["etapa"] = "matriculado"
         meta["pending_contract"] = False
-        aluno = (ls.get("aluno_nome") or meta.get("full_name") or ls.get("nome") or "").strip()
+        from app.contract_party import resolve_contract_party
+
+        party = resolve_contract_party(meta, ls)
+        aluno = (
+            session.lead_name
+            or party.get("aluno_nome")
+            or ls.get("aluno_nome")
+            or ""
+        ).strip()
+        comprador = (
+            party.get("comprador_nome") or ls.get("nome") or ""
+        ).strip()
         matriculas = list(meta.get("matriculas") or [])
         if not isinstance(matriculas, list):
             matriculas = []
@@ -609,6 +629,7 @@ async def checkout_confirm(token: str):
             {
                 "curso": session.course_label,
                 "aluno_nome": aluno or None,
+                "comprador_nome": comprador or None,
                 "status": "confirmada",
                 "at": datetime.now(timezone.utc).isoformat(),
             }
@@ -646,6 +667,8 @@ async def checkout_confirm(token: str):
                     lead_nome=aluno or ls.get("nome"),
                     lead_phone=session.phone,
                     curso=session.course_label,
+                    aluno_nome=aluno,
+                    comprador_nome=comprador,
                 )
                 await notify_numbers(
                     evo, nums, note, exclude_phone=session.phone
@@ -667,3 +690,6 @@ async def checkout_confirm(token: str):
   <p>Pode voltar ao WhatsApp — {get_settings().agent_name} continua te acompanhando.</p>
 </body></html>"""
     )
+
+
+register_fase4_routes(app, admin_authorized=_admin_authorized)

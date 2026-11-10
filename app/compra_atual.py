@@ -17,6 +17,8 @@ def default_compra_atual() -> dict[str, Any]:
         "curso_recomendado": None,
         "curso_escolhido": None,
         "curso_alternativo": None,
+        # Dados pessoais do ALUNO desta compra (não misturar com matrícula anterior).
+        "aluno_dados": {"nome": None, "cpf": None, "birth_date": None},
         "aceite": False,
         "etapa": "qualificacao",
     }
@@ -26,7 +28,14 @@ def ensure_compra_atual(meta: dict[str, Any]) -> dict[str, Any]:
     ca = meta.get("compra_atual")
     if isinstance(ca, dict) and ca.get("active", True):
         base = default_compra_atual()
-        base.update({k: ca.get(k, base[k]) for k in base})
+        for k in base:
+            if k == "aluno_dados":
+                prev = ca.get("aluno_dados") if isinstance(ca.get("aluno_dados"), dict) else {}
+                merged = dict(base["aluno_dados"])
+                merged.update({kk: prev.get(kk, merged[kk]) for kk in merged})
+                base["aluno_dados"] = merged
+            else:
+                base[k] = ca.get(k, base[k])
         meta["compra_atual"] = base
         return base
     ca = default_compra_atual()
@@ -94,6 +103,16 @@ def format_compra_atual_block(ca: dict[str, Any] | None) -> str:
         parts.append(f"escolhido={ca['curso_escolhido']}")
     if ca.get("aceite"):
         parts.append("aceite=sim")
+    dados = ca.get("aluno_dados") if isinstance(ca.get("aluno_dados"), dict) else {}
+    if dados.get("nome") or dados.get("cpf") or dados.get("birth_date"):
+        bits = []
+        if dados.get("nome"):
+            bits.append(f"nome={dados['nome']}")
+        if dados.get("cpf"):
+            bits.append("cpf=ok")
+        if dados.get("birth_date"):
+            bits.append("nasc=ok")
+        parts.append("aluno_dados(" + ", ".join(bits) + ")")
     if ca.get("etapa"):
         parts.append(f"etapa_compra={ca['etapa']}")
     return "Compra em andamento: " + "; ".join(parts) + "."

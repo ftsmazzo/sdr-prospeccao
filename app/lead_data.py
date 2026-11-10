@@ -6,6 +6,7 @@ import re
 from datetime import date
 from typing import Any
 
+from app.contract_party import is_third_person_purchase, store_aluno_dados
 from app.schemas import normalize_cpf
 
 _CPF_RE = re.compile(
@@ -16,7 +17,6 @@ _BIRTH_LABELED_RE = re.compile(
     r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b"
 )
 _DATE_ONLY_RE = re.compile(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b")
-# Nome: linha/"nome:" + 2–5 palavras capitalizadas ou título simples
 _NAME_LABELED_RE = re.compile(
     r"(?i)\bnome(?:\s+completo)?\s*[:\-]\s*([A-Za-zÁ-ú][A-Za-zÁ-ú'\-]+"
     r"(?:\s+[A-Za-zÁ-ú][A-Za-zÁ-ú'\-]+){1,4})"
@@ -38,9 +38,6 @@ def _norm_birth(raw: str) -> str | None:
         y = (2000 + y) if y < 50 else (1900 + y)
     if not (1 <= d <= 31 and 1 <= m <= 12):
         return None
-    # Idade plausível para matrícula (15–90 anos, ano corrente ~2026).
-    from datetime import date
-
     today = date.today()
     try:
         born = date(y, m, d)
@@ -71,7 +68,6 @@ def extract_contract_fields_from_text(text: str) -> dict[str, str]:
         if norm:
             out["birth_date"] = norm
     elif out.get("cpf"):
-        # Sem rótulo: só aceita data empilhada com CPF (bloco de dados do contrato).
         for m_date in _DATE_ONLY_RE.finditer(raw):
             norm = _norm_birth(m_date.group(1))
             if norm:
@@ -82,7 +78,6 @@ def extract_contract_fields_from_text(text: str) -> dict[str, str]:
     if m_name:
         out["full_name"] = re.sub(r"\s+", " ", m_name.group(1)).strip()
     else:
-        # Se a mensagem tem CPF/nascimento, tenta a 1ª linha só com nome
         if out.get("cpf") or out.get("birth_date"):
             for line in raw.splitlines():
                 line = line.strip()
@@ -101,21 +96,37 @@ def extract_contract_fields_from_text(text: str) -> dict[str, str]:
 def apply_extracted_contract_fields(
     meta: dict[str, Any], ls: dict[str, Any], extracted: dict[str, str]
 ) -> None:
-    """Grava no meta/ls sem apagar o que já existia."""
-    if extracted.get("cpf") and not meta.get("cpf"):
-        meta["cpf"] = extracted["cpf"]
-    if extracted.get("birth_date") and not meta.get("birth_date"):
-        meta["birth_date"] = extracted["birth_date"]
-    if extracted.get("full_name"):
-        name = extracted["full_name"]
-        if ls.get("aluno_e_terceiro"):
-            if not ls.get("aluno_nome"):
-                ls["aluno_nome"] = name
+    """Grava no meta/ls/compra_atual sem apagar matrícula anterior do comprador."""
+    third = is_third_person_purchase(meta, ls)
+    nome = extracted.get("full_name")
+    cpf = extracted.get("cpf")
+    birth = extracted.get("birth_date")
+
+    if third:
+        # Dados desta compra vão para o ALUNO — não sobrescrevem cpf/nome do comprador.
+        store_aluno_dados(
+            meta,
+            ls,
+            nome=nome or None,
+            cpf=cpf or None,
+            birth_date=birth or None,
+        )
+    else:
+        if cpf and not meta.get("cpf"):
+            meta["cpf"] = cpf
+        if birth and not meta.get("birth_date"):
+            meta["birth_date"] = birth
+        if nome:
             if not meta.get("full_name"):
-                meta["full_name"] = name
-        else:
-            if not meta.get("full_name"):
-                meta["full_name"] = name
+                meta["full_name"] = nome
             if not ls.get("nome"):
-                ls["nome"] = name
+                ls["nome"] = nome
+        # Espelha também em aluno_dados da compra própria (mesma pessoa).
+        store_aluno_dados(
+            meta,
+            ls,
+            nome=nome or meta.get("full_name") or ls.get("nome"),
+            cpf=cpf or meta.get("cpf"),
+            birth_date=birth or meta.get("birth_date"),
+        )
     meta["lead_state"] = ls

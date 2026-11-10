@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     inbound_debounce_seconds: float = 7.0
     handoff_max_objecoes: int = 3
 
+    # Fase 4 — envio ativo / retomada / demo
+    demo_fast_followup: bool = False
+    active_send_daily_limit: int = 50
+    active_send_min_gap_seconds: int = 30
+    active_send_max_gap_seconds: int = 120
+    primeiro_contato_delay_seconds: int = 45
+
     # TTL memória conversa/meta (segundos) — 30 dias
     memory_ttl_seconds: int = 60 * 60 * 24 * 30
     memory_max_messages: int = 30

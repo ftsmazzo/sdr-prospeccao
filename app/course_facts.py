@@ -62,6 +62,10 @@ def _catalog_entries() -> list[tuple[str, int]]:
     ]
 
 
+def catalog_course_names() -> list[str]:
+    return [name for name, _hours in _catalog_entries()]
+
+
 def resolve_catalog_name(course: str | None) -> str | None:
     if not (course or "").strip():
         return None

@@ -11,6 +11,7 @@ from typing import Any
 logger = logging.getLogger("edu.lead_state")
 
 ETAPAS = (
+    "primeiro_contato",
     "abertura",
     "qualificacao",
     "recomendacao",
@@ -18,6 +19,7 @@ ETAPAS = (
     "fechamento",
     "contrato_enviado",
     "matriculado",
+    "esfriou",
     "nao_elegivel",
     "aluno_atual",
     "handoff_humano",
@@ -492,11 +494,11 @@ def advance_etapa(meta: dict[str, Any], *, handoff_max_objecoes: int = 3) -> str
             meta["desconto_respondido"] = True
         return _enter_handoff(meta, "objecoes_sem_avanco")
 
-    if prev in ("abertura",):
+    if prev in ("abertura", "primeiro_contato", "esfriou"):
         meta["etapa"] = "qualificacao"
         etapa = "qualificacao"
 
-    if etapa in ("qualificacao", "abertura"):
+    if etapa in ("qualificacao", "abertura", "primeiro_contato"):
         if grad == "cursando":
             meta["etapa"] = "qualificacao"
             if mark_desconto_respondido:
@@ -702,6 +704,7 @@ def begin_new_purchase(meta: dict[str, Any], ls: dict[str, Any]) -> None:
         ca["aluno_relacao"] = ls.get("aluno_relacao")
         ca["aluno_genero"] = ls.get("aluno_genero")
         ca["aluno_nome"] = ls.get("aluno_nome")
+        ca["aluno_dados"] = {"nome": None, "cpf": None, "birth_date": None}
         # Curso já matriculado (compra para si) não serve para a nova jornada.
         curso = str(ls.get("curso_escolhido") or "").strip()
         if curso and curso in enrolled:
