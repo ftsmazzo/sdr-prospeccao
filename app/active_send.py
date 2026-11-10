@@ -66,13 +66,18 @@ def can_send_active(
         return False, "opt_out"
     if meta.get("retomadas_paused"):
         return False, "paused"
+    etapa = meta.get("etapa") or ""
+    if etapa in ("matriculado", "aluno_atual", "nao_elegivel"):
+        return False, f"etapa_{etapa}"
+    if meta.get("matriculas") and etapa == "matriculado":
+        return False, "ja_matriculado"
     if not meta.get("consentimento"):
         # Leads inbound orgânicos (WhatsApp) têm consentimento implícito de conversa;
         # envio ATIVO (primeiro contato / retomada iniciada por nós) exige flag.
         if meta.get("origem") in ("formulario", "anuncio", "site", "importacao"):
             return False, "sem_consentimento"
     ls = meta.get("lead_state") or {}
-    if ls.get("e_aluno_atual") or meta.get("etapa") == "aluno_atual":
+    if ls.get("e_aluno_atual") or etapa == "aluno_atual":
         return False, "aluno_atual"
     nums = parse_notify_numbers(settings.handoff_notify_numbers)
     if is_internal_number(phone, nums):
@@ -129,6 +134,22 @@ async def dispatch_active_job(
 
     mem = ConversationMemory(settings)
     meta = mem.get_meta(phone)
+    # Se já matriculou depois do agendamento, cancela a série inteira.
+    if (meta.get("etapa") or "") == "matriculado" or meta.get("retomadas_paused"):
+        try:
+            scheduler.clear_for_phone(
+                phone, types={"retomada", "primeiro_contato", "outbound_active"}
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        meta["active_send_blocked_reason"] = "ja_matriculado"
+        meta["proxima_retomada_at"] = None
+        try:
+            mem.set_meta(phone, meta)
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("active_send abortado — já matriculado phone=%s", phone)
+        return
     ok, reason = can_send_active(meta, phone, settings)
     if not ok:
         meta["active_send_blocked_reason"] = reason

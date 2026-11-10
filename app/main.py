@@ -630,6 +630,19 @@ async def checkout_confirm(token: str):
         ls = ensure_lead_state(meta)
         meta["etapa"] = "matriculado"
         meta["pending_contract"] = False
+        meta["contract_sent"] = True
+        # Para retomadas de contrato/silêncio — lead já pagou.
+        try:
+            from app.followups import get_scheduler
+            from app.outbound_cadence import cancel_retomadas
+
+            cancel_retomadas(session.phone, get_scheduler())
+            meta["proxima_retomada_at"] = None
+            meta["retomadas_paused"] = True
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "falha ao cancelar retomadas pós-checkout phone=%s", session.phone
+            )
         from app.contract_party import resolve_contract_party
 
         party = resolve_contract_party(meta, ls)

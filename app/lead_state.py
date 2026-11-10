@@ -736,6 +736,7 @@ def begin_new_purchase(meta: dict[str, Any], ls: dict[str, Any]) -> None:
 
     meta["pending_contract"] = False
     meta["contract_sent"] = False
+    meta["retomadas_paused"] = False
     meta["_reopen_purchase"] = True
     meta["lead_state"] = ls
     # Sai de matriculado imediatamente (prompt + gates usam a etapa atual).

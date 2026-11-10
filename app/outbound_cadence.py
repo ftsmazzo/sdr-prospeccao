@@ -115,6 +115,10 @@ def schedule_primeiro_contato(
 def schedule_contract_followups(
     phone: str, meta: dict[str, Any], scheduler: Any
 ) -> None:
+    if (meta.get("etapa") or "") == "matriculado" or meta.get("retomadas_paused"):
+        cancel_retomadas(phone, scheduler)
+        meta["proxima_retomada_at"] = None
+        return
     s = get_settings()
     delays = cadence_delays(s)["contrato"]
     now = time.time()
@@ -189,6 +193,8 @@ async def compose_active_message(
     ls = ensure_lead_state(meta)
     jtype = str(job.get("type") or "")
     trigger = str(job.get("trigger") or "")
+    if (meta.get("etapa") or "") == "matriculado" or meta.get("retomadas_paused"):
+        return ""
     briefing = str(meta.get("briefing") or "")
     interesse = (
         meta.get("interesse")
@@ -306,6 +312,7 @@ async def compose_active_message(
                 and max_steps
                 and step >= max_steps
                 and "silence" in trigger
+                and (meta.get("etapa") or "") != "matriculado"
             ):
                 meta["etapa"] = "esfriou"
             return out
@@ -319,6 +326,7 @@ async def compose_active_message(
         and max_steps
         and step >= max_steps
         and "silence" in trigger
+        and (meta.get("etapa") or "") != "matriculado"
     ):
         meta["etapa"] = "esfriou"
     return fb
