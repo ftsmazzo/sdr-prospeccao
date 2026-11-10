@@ -253,6 +253,20 @@ def test_opt_out_blocks_active_send():
     assert ok is False and reason == "opt_out"
 
 
+def test_form_lead_on_notify_number_allowed():
+    s = _settings(handoff_notify_numbers="5516996282630")
+    blocked, why = can_send_active(
+        {"origem": "whatsapp"}, "5516996282630", s  # type: ignore[arg-type]
+    )
+    assert blocked is False and why == "interno"
+    ok, reason = can_send_active(
+        {"origem": "formulario", "consentimento": True},
+        "5516996282630",
+        s,  # type: ignore[arg-type]
+    )
+    assert ok is True and reason == "ok_form_interno"
+
+
 def test_cancel_retomadas_on_schedule_think():
     jobs: list[dict] = []
 

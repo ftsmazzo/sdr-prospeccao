@@ -146,9 +146,11 @@ async def list_followups(request: Request):
         "jobs": [
             {
                 "id": j.get("id"),
+                "type": j.get("type"),
                 "phone": j.get("phone"),
                 "course": j.get("course"),
                 "lead_name": j.get("lead_name"),
+                "trigger": j.get("trigger"),
                 "has_cpf": bool(j.get("cpf")),
                 "seconds_left": max(0, int((j.get("run_at") or 0) - now)),
                 "with_checkout": j.get("with_checkout", True),
@@ -257,6 +259,13 @@ async def get_lead(phone: str, request: Request):
         "compra_atual": meta.get("compra_atual"),
         "briefing": meta.get("briefing") or "",
         "pending_offer": meta.get("pending_offer"),
+        "origem": meta.get("origem"),
+        "consentimento": bool(meta.get("consentimento")),
+        "opt_out": bool(meta.get("opt_out")),
+        "interesse": meta.get("interesse"),
+        "active_sends": meta.get("active_sends") or [],
+        "active_send_blocked_reason": meta.get("active_send_blocked_reason"),
+        "proxima_retomada_at": meta.get("proxima_retomada_at"),
         "history_len": len(history),
         "summary": summarize_lead(meta),
     }

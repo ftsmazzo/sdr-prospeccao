@@ -75,6 +75,41 @@ def register_fase4_routes(app: FastAPI, *, admin_authorized) -> None:
             )
         return resp
 
+    @app.post("/admin/leads/{phone}/force-primeiro-contato")
+    async def force_primeiro_contato(phone: str, request: Request):
+        """Reagenda e/ou dispara primeiro contato (recuperação de demo)."""
+        if not admin_authorized(request):
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        from app.followups import get_scheduler
+        from app.memory import ConversationMemory
+        from app.outbound_cadence import schedule_primeiro_contato
+
+        settings = get_settings()
+        digits = "".join(ch for ch in phone if ch.isdigit())
+        mem = ConversationMemory(settings)
+        meta = mem.get_meta(digits)
+        if not meta:
+            return JSONResponse({"ok": False, "error": "lead_nao_encontrado"}, status_code=404)
+        # Garante flags de form (caso meta antiga/parcial).
+        meta["consentimento"] = True
+        meta.setdefault("origem", "formulario")
+        meta["opt_out"] = False
+        meta["retomadas_paused"] = False
+        meta.pop("active_send_blocked_reason", None)
+        if meta.get("etapa") not in ("primeiro_contato", "abertura", "qualificacao"):
+            meta["etapa"] = "primeiro_contato"
+        sched = get_scheduler()
+        # Limpa jobs corrompidos (type null) e pendentes do phone.
+        sched.clear_for_phone(digits)
+        schedule_primeiro_contato(digits, meta, sched, delay_seconds=8)
+        mem.set_meta(digits, meta)
+        return {
+            "ok": True,
+            "phone": digits,
+            "etapa": meta.get("etapa"),
+            "scheduled_in_seconds": 8,
+        }
+
     @app.post("/admin/leads/{phone}/painel-action")
     async def painel_action(phone: str, request: Request):
         form = await request.form()

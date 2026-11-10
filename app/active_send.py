@@ -76,6 +76,15 @@ def can_send_active(
         return False, "aluno_atual"
     nums = parse_notify_numbers(settings.handoff_notify_numbers)
     if is_internal_number(phone, nums):
+        # Exceção: lead criado pelo formulário/API com consentimento explícito
+        # (demo: mesmo chip do especialista preenchendo /interesse).
+        if meta.get("consentimento") and meta.get("origem") in (
+            "formulario",
+            "anuncio",
+            "site",
+            "importacao",
+        ):
+            return True, "ok_form_interno"
         return False, "interno"
     return True, "ok"
 
@@ -122,6 +131,11 @@ async def dispatch_active_job(
     meta = mem.get_meta(phone)
     ok, reason = can_send_active(meta, phone, settings)
     if not ok:
+        meta["active_send_blocked_reason"] = reason
+        try:
+            mem.set_meta(phone, meta)
+        except Exception:  # noqa: BLE001
+            pass
         logger.info("active_send bloqueado phone=%s reason=%s", phone, reason)
         return
 
