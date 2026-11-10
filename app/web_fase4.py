@@ -606,34 +606,83 @@ _INTERESSE_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Interesse — Polo Faveni Catanduva</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
-:root { --ink:#0f2f24; --leaf:#1f6b4a; --leaf2:#2d8f63; --line:#c5ddd0; }
-* { box-sizing:border-box; }
-body { margin:0; font-family:"DM Sans",system-ui,sans-serif; color:var(--ink);
-  background: radial-gradient(1200px 600px at 10% -10%, #d9efe3 0%, transparent 55%),
-              linear-gradient(165deg, #f4fbf7 0%, #e7f2ec 45%, #f7faf8 100%); min-height:100vh; }
-.wrap { max-width:28rem; margin:0 auto; padding:1.5rem 1.1rem 3rem; }
-.brand { font-family:"Fraunces",Georgia,serif; font-size:clamp(1.7rem,5vw,2.2rem); line-height:1.15; margin:0 0 .35rem; }
-.sub { color:#3d5c4e; margin:0 0 1.4rem; font-size:1rem; }
-form { background:#fff; border:1px solid var(--line); border-radius:18px; padding:1.25rem; box-shadow:0 12px 40px rgba(15,47,36,.06); }
-label { display:block; font-size:.85rem; font-weight:600; margin:0.85rem 0 .35rem; }
-input,select { width:100%; padding:.75rem .85rem; border:1px solid var(--line); border-radius:12px; font:inherit; background:#fbfefc; }
-.consent { display:flex; gap:.65rem; align-items:flex-start; margin:1.1rem 0 1.3rem; font-size:.92rem; line-height:1.35; }
-.consent input { width:auto; margin-top:.2rem; }
-button { width:100%; border:0; border-radius:999px; padding:.95rem 1rem; font:inherit; font-weight:700;
-  color:#fff; background:linear-gradient(135deg,var(--leaf),var(--leaf2)); cursor:pointer; }
-button:disabled { opacity:.55; cursor:wait; }
-.ok,.err { margin-top:1rem; padding:.85rem 1rem; border-radius:12px; display:none; }
-.ok { background:#e5f7ec; color:#145c38; }
-.err { background:#fdecea; color:#8a1f1a; }
-.foot { margin-top:1.2rem; font-size:.8rem; color:#5a7367; text-align:center; }
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --ok-bg: #ecfdf5;
+  --ok-ink: #047857;
+  --err-bg: #fef2f2;
+  --err-ink: #b91c1c;
+  --shadow: 0 1px 2px rgba(15,23,42,.06), 0 12px 32px rgba(15,23,42,.06);
+  --font: "IBM Plex Sans", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  background:
+    radial-gradient(900px 420px at 100% -10%, #dbeafe 0%, transparent 55%),
+    linear-gradient(180deg, #eef2f7 0%, var(--bg) 45%, #eef2f7 100%);
+}
+.shell { max-width: 28rem; margin: 0 auto; padding: 1.75rem 1.15rem 3rem; }
+.brand-mark {
+  display: inline-flex; align-items: center; gap: .45rem;
+  font-size: .78rem; font-weight: 650; color: #1e40af;
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 999px;
+  padding: .28rem .65rem; margin: 0 0 .85rem;
+}
+h1 {
+  margin: 0 0 .4rem; font-size: clamp(1.55rem, 4.5vw, 1.9rem);
+  font-weight: 700; letter-spacing: -.02em; line-height: 1.2;
+}
+.sub { margin: 0 0 1.35rem; color: var(--muted); font-size: .98rem; line-height: 1.45; }
+form {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  padding: 1.2rem 1.15rem 1.3rem; box-shadow: var(--shadow);
+}
+label { display: block; font-size: .8rem; font-weight: 600; margin: 0 0 .35rem; color: #334155; }
+label + input, label + select { margin-bottom: .9rem; }
+input, select {
+  width: 100%; padding: .75rem .85rem; border: 1px solid var(--line);
+  border-radius: 10px; font: inherit; background: #fff; color: var(--ink);
+}
+input:focus, select:focus {
+  outline: 2px solid #93c5fd; outline-offset: 1px; border-color: #93c5fd;
+}
+.consent {
+  display: flex; gap: .65rem; align-items: flex-start;
+  margin: .25rem 0 1.15rem; font-size: .9rem; line-height: 1.4; color: #334155;
+}
+.consent input { width: auto; margin-top: .2rem; }
+button[type="submit"] {
+  width: 100%; border: 0; border-radius: 10px; padding: .9rem 1rem;
+  font: inherit; font-weight: 650; color: #fff; background: var(--accent); cursor: pointer;
+}
+button[type="submit"]:hover { background: var(--accent-hover); }
+button[type="submit"]:disabled { opacity: .55; cursor: wait; }
+button[type="submit"]:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.ok, .err {
+  margin-top: .9rem; padding: .8rem .9rem; border-radius: 10px;
+  display: none; font-size: .9rem; line-height: 1.35;
+}
+.ok { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid #a7f3d0; }
+.err { background: var(--err-bg); color: var(--err-ink); border: 1px solid #fecaca; }
+.foot { margin-top: 1.15rem; font-size: .78rem; color: var(--muted); text-align: center; line-height: 1.4; }
+::selection { background: #bfdbfe; }
 </style>
 </head>
 <body>
-<main class="wrap">
-  <p style="letter-spacing:.08em;text-transform:uppercase;font-size:.72rem;color:var(--leaf);font-weight:700;margin:0 0 .5rem">Polo Faveni Catanduva</p>
-  <h1 class="brand">Quero saber mais sobre a pós</h1>
+<main class="shell">
+  <div class="brand-mark">Polo Faveni Catanduva</div>
+  <h1>Quero saber mais sobre a pós</h1>
   <p class="sub">Deixa seu WhatsApp — a Clara do polo te chama por lá, sem compromisso.</p>
   <form id="f">
     <label for="nome">Nome</label>
