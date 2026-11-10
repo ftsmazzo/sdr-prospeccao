@@ -974,11 +974,86 @@ _FAREWELL_STOCK = (
 )
 
 
+_SOFT_DEFERRAL_RE = re.compile(
+    r"(?i)\b("
+    r"momento\s+melhor|"
+    r"agora\s+n[aã]o\s+(?:posso|consigo|d[aá]|tenho\s+como|é\s+o\s+momento|rola)|"
+    r"n[aã]o\s+tenho\s+como\s+(?:agora|fazer|pagar|matricular)|"
+    r"mais\s+pra\s+frente|"
+    r"depois\s+(?:eu\s+)?(?:vejo|volto|falo)|"
+    r"n[aã]o\s+(?:posso|consigo)\s+agora|"
+    r"sem\s+condi[cç][oõ]es\s+agora|"
+    r"vou\s+esperar\s+(?:um\s+)?momento|"
+    r"deixa\s+pra\s+(?:l[aá]|depois)|"
+    r"por\s+enquanto\s+(?:n[aã]o|deixa)|"
+    r"vou\s+pensar|"
+    r"pensar\s+(?:um\s+pouco|mais|com\s+calma)"
+    r")\b"
+)
+
+_EXPLICIT_CALLBACK_RE = re.compile(
+    r"(?i)\b("
+    r"me\s+(?:chama|liga|cobra)\b.{0,40}(?:"
+    r"amanh[aã]|semana\s+que\s+vem|pr[oó]xima\s+semana|"
+    r"depois|daqui\s+a\s+\d+\s+dias?|mais\s+tarde"
+    r")|"
+    r"(?:"
+    r"amanh[aã]|semana\s+que\s+vem|pr[oó]xima\s+semana|"
+    r"depois\s+de\s+amanh[aã]|daqui\s+a\s+\d+\s+dias?"
+    r").{0,40}\bme\s+(?:chama|liga|cobra)\b|"
+    r"me\s+(?:chama|liga|cobra)\s+depois|"
+    r"me\s+cobra\b"
+    r")"
+)
+
+_LAZY_CLOSE_RE = re.compile(
+    r"(?i)("
+    r"quando\s+(?:o\s+momento|quiser|fizer\s+(?:mais\s+)?sentido|puder)|"
+    r"[eé]\s+s[oó]\s+me\s+chamar|"
+    r"quando\s+der\b"
+    r")"
+)
+
+
+def lead_soft_deferral(text: str) -> bool:
+    """Esquiva vaga de momento (ainda não é 'me chama depois' explícito)."""
+    return bool(_SOFT_DEFERRAL_RE.search(text or ""))
+
+
+def lead_asks_explicit_callback(text: str) -> bool:
+    """Pedido explícito de retorno com tempo/ação."""
+    return bool(_EXPLICIT_CALLBACK_RE.search(text or ""))
+
+
+def reply_looks_lazy_close(text: str) -> bool:
+    """Resposta que encerra sem investigar (humano preguiçoso)."""
+    raw = (text or "").strip()
+    if not raw:
+        return True
+    if "?" in raw:
+        return False
+    return bool(_LAZY_CLOSE_RE.search(raw))
+
+
+def soft_deferral_probe_reply(nome: str | None = None) -> str:
+    first = (nome or "").split()[0] if nome else ""
+    greet = f"{first}, " if first else ""
+    return (
+        f"{greet}tranquilo. Só pra eu te ajudar do jeito certo: "
+        "o que mais te segura agora é o valor, a rotina/tempo, "
+        "ou outra dúvida do curso?"
+    )
+
+
 def lead_says_farewell_or_space(text: str) -> bool:
     """Despedida / pedido de espaço (stock de despedida só neste caso)."""
     raw = (text or "").strip()
     if not raw:
         return False
+    # Esquiva de objeção ainda precisa de isolamento — não trata como tchau.
+    if lead_soft_deferral(raw) and not lead_asks_explicit_callback(raw):
+        if not re.search(r"(?i)\b(tchau|at[eé]\s+mais|at[eé]\s+logo)\b", raw):
+            return False
     return bool(
         re.search(
             r"(?i)\b("

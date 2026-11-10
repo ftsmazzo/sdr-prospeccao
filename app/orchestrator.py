@@ -20,7 +20,11 @@ from app.lead_state import (
     can_run_action,
     ensure_lead_state,
     enter_handoff,
+    lead_asks_explicit_callback,
     lead_says_farewell_or_space,
+    lead_soft_deferral,
+    reply_looks_lazy_close,
+    soft_deferral_probe_reply,
     merge_state_update,
     reply_looks_like_callback_promise,
     reply_looks_like_delivery_promise,
@@ -1489,6 +1493,25 @@ class Orchestrator:
                         ),
                     }
                 )
+            if (
+                lead_soft_deferral(user_text)
+                and not lead_asks_explicit_callback(user_text)
+                and not lead_says_farewell_or_space(user_text)
+            ):
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "O lead deu uma ESQUIVA VAGA de momento (ex.: 'agora não', "
+                            "'momento melhor') — NÃO encerre a conversa e NÃO diga só "
+                            "'quando quiser me chama'. Acolha em 1 frase e ISOLA a "
+                            "objeção real com UMA pergunta: é valor, tempo/rotina, "
+                            "dúvida do curso ou outra coisa? "
+                            "state_update: objecao_ativa=vou_pensar (ou a categoria "
+                            "real se ele já deixar claro)."
+                        ),
+                    }
+                )
             messages.append({"role": "user", "content": user_text})
 
             agent = await self._call_agent_json(messages)
@@ -1638,18 +1661,39 @@ class Orchestrator:
                 "pending_offer_executed": True,
             }
 
-        # Agenda retomada real quando lead pede tempo / "me chama…".
+        # Soft deferral / callback: nunca vazar placeholder interno ao lead.
         ls_now = meta.get("lead_state") or {}
-        wants_callback = bool(
-            ls_now.get("objecao_ativa") == "vou_pensar"
-            or re.search(
-                r"(?i)\b("
-                r"me\s+chama|me\s+liga|semana\s+que\s+vem|"
-                r"depois\s+de\s+amanh[aã]|vou\s+pensar|me\s+cobra"
-                r")\b",
-                user_text or "",
+        soft_text = lead_soft_deferral(user_text)
+        explicit_cb = lead_asks_explicit_callback(user_text)
+        farewell = lead_says_farewell_or_space(user_text)
+        obj = ls_now.get("objecao_ativa")
+        if obj not in (None, "", "vou_pensar"):
+            meta["soft_deferral_count"] = 0
+        if soft_text and not explicit_cb and not farewell:
+            n_soft = int(meta.get("soft_deferral_count") or 0) + 1
+            meta["soft_deferral_count"] = n_soft
+            if reply_looks_lazy_close(reply):
+                reply = soft_deferral_probe_reply(
+                    (ls_now.get("nome") or push_name or "")
+                )
+                logger.info("soft_deferral probe phone=%s n=%s", phone, n_soft)
+            # 1ª: só investiga. 2ª+: agenda retorno em silêncio.
+            wants_callback = n_soft >= 2
+        else:
+            wants_callback = bool(explicit_cb)
+
+        # Sanidade: nunca enviar texto de controle interno ao WhatsApp.
+        if reply and re.search(r"(?i)modo\s*demo|[\(\[]\s*demo\s*[\)\]]", reply):
+            reply = re.sub(
+                r"(?i)\s*(?:[\(\[]?\s*modo\s*demo\s*[\)\]]?|[\(\[]\s*demo\s*[\)\]])",
+                "",
+                reply,
             )
-        )
+            reply = re.sub(r"(?i)\s*em alguns minutinhos\.?", "", reply)
+            reply = re.sub(r"[ \t]{2,}", " ", reply)
+            reply = re.sub(r"\n{3,}", "\n\n", reply).strip(" \n\t.-")
+            logger.warning("stripped internal demo wording phone=%s", phone)
+
         if wants_callback and not meta.get("opt_out"):
             try:
                 from app.outbound_cadence import schedule_think_followup
@@ -1660,17 +1704,15 @@ class Orchestrator:
                 meta["_retomada_agendada"] = True
                 if blocked_promise_reason == "promessa_lembrete":
                     blocked_promise_reason = None
-                if not re.search(r"(?i)\b(agend|retorno|te\s+chamo|volto)\b", reply or ""):
-                    when = (
-                        "em alguns minutinhos (modo demo)"
-                        if getattr(self.settings, "demo_fast_followup", False)
-                        else f"em cerca de {max(1, int(delay // 3600))}h"
-                        if delay >= 3600
-                        else "no prazo combinado"
-                    )
+                # Confirma retorno só se o lead pediu explicitamente e a reply
+                # ainda não combinou — NUNCA cite "modo demo" / timing interno.
+                if explicit_cb and not re.search(
+                    r"(?i)\b(te\s+chamo|retorno|volto\s+a\s+te|te\s+aviso)\b",
+                    reply or "",
+                ):
                     reply = (
                         (reply or "").rstrip()
-                        + f"\n\nCombinado — te chamo de novo {when}."
+                        + "\n\nCombinado — te chamo de novo por aqui."
                     ).strip()
                 logger.info("retomada agendada phone=%s delay=%ss", phone, int(delay))
             except Exception:  # noqa: BLE001
